@@ -110,12 +110,65 @@ def parse_ports(ports_arg):
         return list(map(int, ports_arg.split(',')))
 
 async def save_open_ports(open_ports, protocol):
-    filename = f"{protocol}_openports.txt"
-    async with aiofiles.open(filename, 'w') as f:
-        for ip, port, proto in sorted(open_ports, key=lambda x: (x[0], x[1])):
-            if proto == protocol:
-                await f.write(f"{ip}:{port}\n")
-    print(f"{Fore.YELLOW}Open ports saved to {filename}")
+    folder_name = f"{protocol}_{random.randint(1000, 9999)}"
+    os.makedirs(folder_name, exist_ok=True)
+    
+    common_ports = {
+        21: "ftp-hosts.txt",
+        22: "ssh-hosts.txt",        
+        23: "telnet-hosts.txt",        
+        25: "smtp-hosts.txt",
+        53: "dns-hosts.txt",      
+        80: "http-hosts.txt",          
+        110: "pop3-hosts.txt",
+        143: "imap-hosts.txt",
+        443: "https-hosts.txt",        
+        445: "smb-hosts.txt",
+        500: "ike-hosts.txt",        
+        3306: "mysql-hosts.txt",
+        3389: "rdp-hosts.txt",
+        5432: "postgresql-hosts.txt",        
+        8080: "http-alt-hosts.txt",
+        8443: "https-alt-hosts.txt",
+        10443: "10443-hosts.txt"
+    }
+
+    web_ports = {80, 443, 8080, 8443, 10443}
+
+    port_files = {}
+    other_ports_file = os.path.join(folder_name, f"{protocol}_other_ports.txt")
+    web_urls_file = os.path.join(folder_name, "web-urls.txt")
+    web_urls = set()
+
+    for ip, port, proto in sorted(open_ports, key=lambda x: (x[0], x[1])):
+        if proto == protocol:
+            if port in common_ports:
+                filename = os.path.join(folder_name, common_ports[port])
+                if filename not in port_files:
+                    port_files[filename] = set()
+                port_files[filename].add(ip)
+            else:
+                if other_ports_file not in port_files:
+                    port_files[other_ports_file] = set()
+                port_files[other_ports_file].add(f"{ip}:{port}")
+            
+            if port in web_ports:
+                protocol_prefix = "https" if port in {443, 8443, 10443} else "http"
+                web_urls.add(f"{protocol_prefix}://{ip}:{port}")
+
+    for filename, ips in port_files.items():
+        async with aiofiles.open(filename, 'w') as f:
+            await f.write("\n".join(sorted(ips)) + "\n")
+
+    if web_urls:
+        async with aiofiles.open(web_urls_file, 'w') as f:
+            await f.write("\n".join(sorted(web_urls)) + "\n")
+
+    print(f"{Fore.YELLOW}Open ports saved to folder: {folder_name}")
+    if web_urls:
+        print(f"{Fore.YELLOW}Web URLs saved to: {web_urls_file}")
+    
+    return folder_name
 
 async def save_progress(ips, ports, open_ports, current_ip_index, current_port_index):
     progress_data = {
@@ -245,7 +298,7 @@ async def scan_ports(ip, ports, protocol, progress, open_ports, max_workers, use
 ## End of Scapy and Standard Port Scanning Section
 
 ## Nmap Service Detection Section
-async def nmap_service_detection(open_ports, protocol):
+async def nmap_service_detection(open_ports, protocol, folder_name):
     clear_screen()
     console = Console()
     table = Table(show_header=True, header_style="bold cyan")
@@ -259,9 +312,12 @@ async def nmap_service_detection(open_ports, protocol):
 
     total_ports = sum(1 for _, _, proto in open_ports if proto == protocol)
 
+    summary_data = []
+
     async def scan_and_update(ip, port):
         result = await run_nmap_scan(ip, port)
         table.add_row(result[0], str(result[1]), result[2], result[3])
+        summary_data.append(result)
         progress.update(1)
         console.clear()
         console.print(table)
@@ -273,6 +329,23 @@ async def nmap_service_detection(open_ports, protocol):
                 tasks.append(scan_and_update(ip, port))
         
         await asyncio.gather(*tasks)
+
+    # Create summary.txt in the existing protocol-specific folder
+    summary_file = os.path.join(folder_name, "summary.txt")
+    
+    async with aiofiles.open(summary_file, 'w') as f:
+        await f.write(f"{protocol.upper()} Service Detection Summary\n")
+        await f.write("=" * 50 + "\n\n")
+        
+        # Create a string representation of the table
+        table_str = "HOST\tPORT\tSTATE\tSERVICE VERSION\n"
+        table_str += "----\t----\t-----\t---------------\n"
+        for result in summary_data:
+            table_str += f"{result[0]}\t{result[1]}\t{result[2]}\t{result[3]}\n"
+        
+        await f.write(table_str)
+    
+    print(f"{Fore.YELLOW}Summary saved to: {summary_file}")
 
 async def run_nmap_scan(ip, port):
     cmd = ["sudo", "nmap", "-sV", "-p", str(port), ip, "-Pn", "-T4"]
@@ -404,22 +477,25 @@ async def main():
                 if args.udp: 
                     await scan_ports(ip, ports, 'udp', progress, open_ports, args.workers, use_scapy)
 
+        tcp_folder = None
+        udp_folder = None
+
         if args.tcp:
-            await save_open_ports(open_ports, 'tcp')
+            tcp_folder = await save_open_ports(open_ports, 'tcp')
         if args.udp:
-            await save_open_ports(open_ports, 'udp')
+            udp_folder = await save_open_ports(open_ports, 'udp')
 
         if args.service:
             if args.tcp:
                 print(f"{Fore.CYAN}\nStarting TCP service detection...")
-                await nmap_service_detection(open_ports, 'tcp')
+                await nmap_service_detection(open_ports, 'tcp', tcp_folder)
                 
                 if args.udp:
                     input(f"{Fore.YELLOW}\nPress Enter to proceed with UDP service detection...")
             
             if args.udp:
                 print(f"{Fore.CYAN}\nStarting UDP service detection...")
-                await nmap_service_detection(open_ports, 'udp')
+                await nmap_service_detection(open_ports, 'udp', udp_folder)
 
         print(f"{Fore.GREEN}\nScan completed.")
         print(f"{Fore.YELLOW}Open ports found: {len(open_ports)}")

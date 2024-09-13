@@ -49,11 +49,14 @@ This example scans TCP ports 1-4000 for IPs listed in ips.txt, using 1000 worker
 
 ## Output
 
-NoLimit generates two main types of output:
+NoLimit generates several output files:
+
 1. Real-time console output with color-coded results.
-2. Text files containing lists of open ports:
-   - `tcp_openports.txt` for open TCP ports.
-   - `udp_openports.txt` for open UDP ports.
+2. Protocol-specific folders (e.g., `tcp_1234`, `udp_5678`) containing:
+   - `summary.txt`: Comprehensive summary of all scanned ports and services.
+   - Specific host files for common ports (e.g., `http-hosts.txt`, `ssh-hosts.txt`).
+   - `web-urls.txt`: List of discovered web URLs.
+   - `[protocol]_other_ports.txt`: List of open ports not covered by specific files.
 
 When service detection is enabled, a detailed table of services and versions is displayed in the console.
 

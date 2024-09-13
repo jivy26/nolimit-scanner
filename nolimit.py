@@ -330,14 +330,12 @@ async def nmap_service_detection(open_ports, protocol, folder_name):
         
         await asyncio.gather(*tasks)
 
-    # Create summary.txt in the existing protocol-specific folder
     summary_file = os.path.join(folder_name, "summary.txt")
     
     async with aiofiles.open(summary_file, 'w') as f:
         await f.write(f"{protocol.upper()} Service Detection Summary\n")
         await f.write("=" * 50 + "\n\n")
         
-        # Create a string representation of the table
         table_str = "HOST\tPORT\tSTATE\tSERVICE VERSION\n"
         table_str += "----\t----\t-----\t---------------\n"
         for result in summary_data:

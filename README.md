@@ -62,4 +62,4 @@ When service detection is enabled, a detailed table of services and versions is 
 
 ## Warnings and Ethical Use
 
-**IMPORTANT**: NoLimit is a powerful tool designed for authorized use only. Improper use on networks without explicit permission may be illegal and unethical. Always ensure you have proper authorization before scanning any network or system you do not own.
+**IMPORTANT**: Improper use on networks without explicit permission may be illegal and unethical. Always ensure you have proper authorization before scanning any network or system you do not own.

@@ -42,7 +42,7 @@ This example scans TCP ports 1-4000 for IPs listed in ips.txt, using 1000 worker
 - `-u, --udp`: Enable UDP port scanning.
 - `-srv, --service`: Enable service detection with Nmap.
 - `-w, --workers`: Number of concurrent workers (default: 500).
-- `--scapy`: Use Scapy for scanning (helps evade firewalls).
+- `--scapy`: Use Scapy for scanning (helps evade firewalls). **Recommend running against only tcpwrapped ports identified, as running on all ports will take a while**
 - `--resume`: Resume from the last saved progress.
 - `--adaptive`: Use adaptive scanning to adjust worker count dynamically.
 - `--rate-limit`: Set rate limit in packets per second.

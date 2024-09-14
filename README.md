@@ -26,23 +26,13 @@ To install NoLimit directly from PyPI, run:
 
 1. Clone the repository:
    ```
-   git clone https://github.com/jivy26/nolimit.git
-   cd nolimit
+   git clone https://github.com/jivy26/nolimit-scanner.git
+   cd nolimit-scanner
    ```
 
 2. Install required packages:
    ```
    pip install -r requirements.txt
-   ```
-
-3. Build the package:
-   ```
-   python setup.py sdist bdist_wheel
-   ```
-
-4. Install the built package:
-   ```
-   pip install dist/nolimit_scanner-*.whl
    ```
 
 ## Example usage:

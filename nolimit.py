@@ -390,11 +390,11 @@ async def main():
    | . ` |/ _ \| |   | | '_ ` _ \| | __|
    | |\  | (_) | |___| | | | | | | | |_ 
    |_| \_|\___/|_____|_|_| |_| |_|_|\__|
-                                        
+                        v1.0 by jivy26    
     '''
     parser = argparse.ArgumentParser(
         description=f'''{ascii_logo}
-    MakeEmSayUhhh: Advanced Python Port Scanner with Service Enumeration...nuh nah nah nah nuh nah nah nah
+    MakeEmSayUhhh: Advanced Python Port Scanner with Service Enumeration inspired by Masscan...nuh nah nah nah nuh nah nah nah
     {Fore.RED}WARNING: Not for use on internal networks as it might cause network disruption.{Fore.RESET}''',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f'''

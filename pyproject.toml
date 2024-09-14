@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nolimit-scanner"
-version = "1.01"
+version = "1.1"
 description = "Inspired by Masscan, NoLimit is a python based asynchronous port scanner and service enumeration."
 authors = [
     { name = "jivy26", email = "jivy26@gmail.com" }

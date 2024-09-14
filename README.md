@@ -1,6 +1,6 @@
-# NoLimit Port Scanner
+# NoLimit Scanner
 
-NoLimit is an advanced, asynchronous port scanner and service enumerator built in Python. It offers high-speed scanning capabilities with customizable options for both TCP and UDP protocols, designed for network administrators and security professionals.
+NoLimit: An advanced, asynchronous port scanner and service enumerator built in Python. Inspired by Masscan, it offers high-speed scanning capabilities with customizable options for both TCP and UDP protocols. NoLimit provides a quick approach to port enumeration, designed for efficiency and speed.
 
 ## Features
 
@@ -17,9 +17,16 @@ NoLimit is an advanced, asynchronous port scanner and service enumerator built i
 
 ## Installation
 
+### Option 1: Install from PyPI
+
+To install NoLimit directly from PyPI, run:
+```pip install nolimit```
+
+### Option 2: Build from Source
+
 1. Clone the repository:
    ```
-   https://github.com/jivy26/nolimit.git
+   git clone https://github.com/jivy26/nolimit.git
    cd nolimit
    ```
 
@@ -28,7 +35,15 @@ NoLimit is an advanced, asynchronous port scanner and service enumerator built i
    pip install -r requirements.txt
    ```
 
-3. Ensure you have Nmap installed on your system for service detection functionality.
+3. Build the package:
+   ```
+   python setup.py sdist bdist_wheel
+   ```
+
+4. Install the built package:
+   ```
+   pip install dist/nolimit_scanner-*.whl
+   ```
 
 ## Example usage:
 `python nolimit.py -p 1-4000 -i ips.txt -t -w 1000 -srv`

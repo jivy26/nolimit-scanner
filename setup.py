@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='nolimit-scanner',
-    version='1.1',
+    version='1.01',
     py_modules=['nolimit'],
     install_requires=[
         'aiofiles==0.8.0',

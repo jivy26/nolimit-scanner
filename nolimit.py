@@ -11,6 +11,8 @@ import sys
 import time
 from functools import lru_cache
 import aiofiles
+import warnings
+from cryptography.utils import CryptographyDeprecationWarning
 from colorama import init, Fore
 from rich.console import Console
 from rich.table import Table
@@ -19,6 +21,8 @@ from tqdm import tqdm
 
 ## Start Utility Functions Section
 init(autoreset=True)
+
+warnings.filterwarnings("ignore", category=CryptographyDeprecationWarning)
 
 logging.basicConfig(filename='nmap_service_detection.log', level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -252,22 +256,34 @@ async def check_tcp_port(ip, port, open_ports):
     except Exception as e:
         tqdm.write(f"{Fore.RED}Error checking TCP {ip}:{port} - {e}")
 
+class UDPProtocol(asyncio.DatagramProtocol):
+    def __init__(self):
+        self.transport = None
+        self.received_data = asyncio.Event()
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        self.received_data.set()
+
 async def check_udp_port(ip, port, open_ports):
     try:
-        transport, _ = await asyncio.wait_for(
-            asyncio.get_event_loop().create_datagram_endpoint(
-                lambda: asyncio.DatagramProtocol(),
-                remote_addr=(ip, port)
-            ),
-            timeout=1.0
+        loop = asyncio.get_event_loop()
+        protocol = UDPProtocol()
+        await loop.create_datagram_endpoint(
+            lambda: protocol,
+            remote_addr=(ip, port)
         )
-        transport.sendto(b'')
-        await asyncio.sleep(0.1)
-        transport.close()
-        open_ports.append((ip, port, 'udp'))
-        tqdm.write(f"{Fore.GREEN}UDP {ip}:{port} is open")
-    except asyncio.TimeoutError:
-        pass
+        protocol.transport.sendto(b'')
+        try:
+            await asyncio.wait_for(protocol.received_data.wait(), timeout=1.0)
+            open_ports.append((ip, port, 'udp'))
+            tqdm.write(f"{Fore.GREEN}UDP {ip}:{port} is open")
+        except asyncio.TimeoutError:
+            pass  # Port is likely closed or filtered
+        finally:
+            protocol.transport.close()
     except Exception as e:
         tqdm.write(f"{Fore.RED}Error checking UDP {ip}:{port} - {e}")
 

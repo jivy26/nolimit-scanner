@@ -14,6 +14,8 @@ NoLimit: An advanced, asynchronous port scanner and service enumerator built in 
 - **Customizable Workers**: Adjust the number of concurrent workers to balance speed and resource usage.
 - **Progress Tracking**: Real-time progress bar and ETA using tqdm.
 - **Colorized Output**: Easy-to-read, color-coded console output for better visibility.
+- **Top Ports Scanning**: Option to scan only the most common ports as defined by Nmap.
+- **Scan Scheduling**: Ability to schedule scans for future execution using the 'at' command.
 
 ## Installation
 
@@ -22,26 +24,33 @@ NoLimit: An advanced, asynchronous port scanner and service enumerator built in 
 To install NoLimit directly from PyPI, run:
 ```pip install nolimit-scanner```
 
+
 ### Option 2: Build from Source
 
 1. Clone the repository:
-   ```
+   ```bash
    git clone https://github.com/jivy26/nolimit-scanner.git
    cd nolimit-scanner
    ```
 
 2. Install required packages:
-   ```
+   ```bash
    pip install -r requirements.txt
    ```
 
-## Example usage:
-`python nolimit.py -p 1-4000 -i ips.txt -t -w 1000 -srv`
+## Usage
+
+Example usage:
+```bash
+python nolimit.py -p 1-4000 -i ips.txt -t -w 1000 -srv
+```
+
 This example scans TCP ports 1-4000 for IPs listed in ips.txt, using 1000 workers and enabling Nmap service detection.
 
 ### Options
 
 - `-p, --ports`: Ports to scan (e.g., "80,443" or "1-1024"). Default: all ports.
+- `--top-ports`: Scan only the top N most common ports (e.g., --top-ports 100).
 - `-i, --ip`: [Required] Single IP or file with list of IPs to scan.
 - `-t, --tcp`: Enable TCP port scanning.
 - `-u, --udp`: Enable UDP port scanning.
@@ -51,6 +60,7 @@ This example scans TCP ports 1-4000 for IPs listed in ips.txt, using 1000 worker
 - `--resume`: Resume from the last saved progress.
 - `--adaptive`: Use adaptive scanning to adjust worker count dynamically.
 - `--rate-limit`: Set rate limit in packets per second.
+- `--schedule`: Schedule the scan for a future time (format: "MM/DD HH:MM").
 
 ## Output
 
@@ -65,6 +75,17 @@ NoLimit generates several output files:
 
 When service detection is enabled, a detailed table of services and versions is displayed in the console.
 
+## Scheduling Scans
+
+To schedule a scan for future execution, use the `--schedule` option followed by the desired date and time in the format "MM/DD HH:MM". For example:
+
+This will schedule the scan to run on May 30th at 10:00 PM. The scheduling feature uses the 'at' command, so make sure it's installed and properly configured on your system.
+
 ## Warnings and Ethical Use
 
 **IMPORTANT**: Improper use on networks without explicit permission may be illegal and unethical. Always ensure you have proper authorization before scanning any network or system you do not own.
+
+## Acknowledgments
+
+- Inspired by the Masscan project
+

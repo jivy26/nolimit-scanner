@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='nolimit-scanner',
-    version='1.2',
+    version='1.3',
     py_modules=['nolimit'],
     author='jivy26',
     author_email='jivy26@gmail.com',

@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.table import Table
 from scapy.all import sr1, IP, TCP, UDP, fragment
 from tqdm import tqdm
+from datetime import datetime
 
 ## Start Utility Functions Section
 init(autoreset=True)
@@ -447,6 +448,10 @@ async def main():
     Example usage:
     python nolimit.py -p 1-4000 -i ips.txt -t -w 1000 -srv
     - This example scans TCP ports 1-4000 for IPs listed in ips.txt, using 1000 workers and enabling nmap service detection.
+
+    python nolimit.py --top-ports 4000 -i ips.txt -t -w 1000 -srv --schedule "05/15 12:00"
+    - This example scans top 4000 TCP ports for IPs listed in ips.txt, using 1000 workers and enabling nmap service detection,
+    schedules the scan for May 15 at 12:00 PM.
     ''',
     usage="python nolimit.py [options]"
     )

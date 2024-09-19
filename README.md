@@ -19,7 +19,7 @@ NoLimit: An advanced, asynchronous port scanner and service enumerator built in 
 
 ## Installation
 
-### Option 1: Install from PyPI
+### Option 1: Install from PyPI (Currently not working, need to fix some PyPi specific Issues use Option 2 for now)
 
 To install NoLimit directly from PyPI, run:
 ```pip install nolimit-scanner```

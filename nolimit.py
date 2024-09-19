@@ -53,31 +53,6 @@ def check_system_dependencies():
         print("Error: nmap is not installed or not in PATH. Please install nmap.")
         sys.exit(1)
 
-# async def check_and_add_alias():
-#     home = os.path.expanduser("~")
-#     zshrc_path = os.path.join(home, ".zshrc")
-    
-#     if not os.path.exists(zshrc_path):
-#         return
-    
-#     async with aiofiles.open(zshrc_path, 'r') as file:
-#         content = await file.read()
-    
-#     if "nolimit.py" not in content:
-#         response = input("Would you like to add a 'nolimit' alias to your .zshrc file? (y/n): ").lower()
-#         if response == 'y':
-#             script_path = os.path.abspath(__file__)
-#             alias_line = f"\nalias nolimit='python {script_path}'\n"
-            
-#             async with aiofiles.open(zshrc_path, 'a') as file:
-#                 await file.write(alias_line)
-            
-#             print(f"{Fore.GREEN}Alias added to {zshrc_path}. Please restart your terminal or run 'source ~/.zshrc' to apply changes.")
-#         else:
-#             print("Alias not added.")
-#     else:
-#         print(f"{Fore.YELLOW}The 'nolimit' alias is already in your .zshrc file.")
-
 def check_scapy_flag(args):
     if args.scapy:
         print(f"{Fore.YELLOW}Scapy mode enabled. Lower worker count is recommended to avoid 'Too many open files' errors.")
@@ -100,10 +75,14 @@ async def run_scapy_scan(command):
     return stdout.decode()
 
 async def load_ips(ip_input):
-    try:
-        async with aiofiles.open(ip_input, 'r') as f:
-            return [line.strip() for line in await f.readlines()]
-    except FileNotFoundError:
+    if os.path.isfile(ip_input):
+        try:
+            async with aiofiles.open(ip_input, 'r') as f:
+                return [line.strip() for line in await f.readlines()]
+        except IOError as e:
+            print(f"{Fore.RED}Error reading IP file: {e}")
+            sys.exit(1)
+    else:
         return [ip_input]
 
 def parse_ports(ports_arg):
@@ -352,12 +331,22 @@ async def nmap_service_detection(open_ports, protocol, folder_name):
         await f.write(f"{protocol.upper()} Service Detection Summary\n")
         await f.write("=" * 50 + "\n\n")
         
-        table_str = "HOST\tPORT\tSTATE\tSERVICE VERSION\n"
-        table_str += "----\t----\t-----\t---------------\n"
-        for result in summary_data:
-            table_str += f"{result[0]}\t{result[1]}\t{result[2]}\t{result[3]}\n"
+        # Adjust column widths based on the longest entries
+        host_width = max(len("HOST"), max(len(result[0]) for result in summary_data))
+        port_width = max(len("PORT"), max(len(str(result[1])) for result in summary_data))
+        state_width = max(len("STATE"), max(len(result[2]) for result in summary_data))
         
-        await f.write(table_str)
+        # Create the header
+        header = f"{'HOST':<{host_width}}  {'PORT':<{port_width}}  {'STATE':<{state_width}}  SERVICE VERSION\n"
+        separator = f"{'-'*host_width}  {'-'*port_width}  {'-'*state_width}  ---------------\n"
+        
+        await f.write(header)
+        await f.write(separator)
+        
+        # Write the data
+        for result in summary_data:
+            line = f"{result[0]:<{host_width}}  {str(result[1]):<{port_width}}  {result[2]:<{state_width}}  {result[3]}\n"
+            await f.write(line)
     
     print(f"{Fore.YELLOW}Summary saved to: {summary_file}")
 
@@ -514,6 +503,11 @@ async def main():
         ports = parse_ports(args.ports)
     else:
         ports = list(range(1, 65536))
+
+    if not os.path.isfile(args.ip):
+        print(f"{Fore.RED}Error: The specified IP file '{args.ip}' does not exist in the current working directory.")
+        sys.exit(1)
+
     ips = shuffle_ips(await load_ips(args.ip))
     open_ports = []
 

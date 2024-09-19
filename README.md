@@ -75,7 +75,7 @@ NoLimit generates several output files:
 
 When service detection is enabled, a detailed table of services and versions is displayed in the console.
 
-## Scheduling Scans
+## Scheduling Scans (Currently Not Functional)
 
 To schedule a scan for future execution, use the `--schedule` option followed by the desired date and time in the format "MM/DD HH:MM". For example:
 

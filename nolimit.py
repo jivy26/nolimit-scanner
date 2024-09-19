@@ -398,6 +398,47 @@ async def adaptive_scan(ip, ports, protocol, progress, open_ports, max_workers, 
 
 ## End of Adaptive Scanning Section
 
+## Utilize NMAP Top Ports 
+
+def load_top_ports(n):
+    nmap_services_path = "/usr/share/nmap/nmap-services"
+    if not os.path.exists(nmap_services_path):
+        print(f"{Fore.RED}Error: Nmap services file not found at {nmap_services_path}")
+        print(f"{Fore.RED}Make sure Nmap is installed and the file exists.")
+        sys.exit(1)
+    
+    ports = []
+    with open(nmap_services_path, 'r') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            parts = line.split()
+            if len(parts) >= 3:
+                port, proto = parts[1].split('/')
+                if proto == 'tcp':
+                    frequency = float(parts[2])
+                    ports.append((int(port), frequency))
+    
+    top_ports = sorted(ports, key=lambda x: x[1], reverse=True)[:n]
+    return [port for port, _ in top_ports]
+
+
+## End of Utilize NMAP Top Ports 
+
+def schedule_scan(args, schedule_time):
+    script_path = os.path.abspath(__file__)
+    command = f"python {script_path} {' '.join(sys.argv[1:])}"
+    
+    # Format the at command
+    at_command = f"echo '{command}' | at {schedule_time}"
+    
+    try:
+        subprocess.run(at_command, shell=True, check=True)
+        print(f"{Fore.GREEN}Scan scheduled for {schedule_time}")
+    except subprocess.CalledProcessError:
+        print(f"{Fore.RED}Failed to schedule the scan. Make sure 'at' is installed and you have the necessary permissions.")
+        sys.exit(1)
+
 async def main():
     ascii_logo = '''
     _   _       _     _           _ _   
@@ -421,6 +462,7 @@ async def main():
     usage="python nolimit.py [options]"
     )
     parser.add_argument('-p', '--ports', nargs='?', const='1-65535', type=str, help='Ports to scan, e.g., "80,443" or "1-1024". If not specified, all ports will be scanned.')
+    parser.add_argument('--top-ports', type=int, help='Scan only the top N most common ports')    
     parser.add_argument('-i', '--ip', type=str, required=True, help='[Required] Single IP or file with list of IPs to scan')
     parser.add_argument('-t', '--tcp', action='store_true', help='TCP Port Scans')
     parser.add_argument('-u', '--udp', action='store_true', help='UDP Port Scans')
@@ -430,11 +472,26 @@ async def main():
     parser.add_argument('--resume', action='store_true', help='Resume from the last saved progress')
     parser.add_argument('--adaptive', action='store_true', help='Use adaptive scanning. Automatically adjusts worker count based on open ports found.')
     parser.add_argument('--rate-limit', type=float, help='Rate limit in packets per second')
+    parser.add_argument('--schedule', type=str, help='Schedule the scan for a future time (format: "MM/DD HH:MM")')
+
 
     args = parser.parse_args()
 
-    # await check_and_add_alias()
-
+    if args.schedule:
+        try:
+            schedule_datetime = datetime.strptime(args.schedule, "%m/%d %H:%M")
+            current_year = datetime.now().year
+            schedule_datetime = schedule_datetime.replace(year=current_year)
+            
+            if schedule_datetime <= datetime.now():
+                schedule_datetime = schedule_datetime.replace(year=current_year + 1)
+            
+            schedule_time = schedule_datetime.strftime("%H:%M %m/%d/%Y")
+            schedule_scan(args, schedule_time)
+            return
+        except ValueError:
+            print(f"{Fore.RED}Invalid date format. Please use MM/DD HH:MM")
+            sys.exit(1)
     use_scapy = check_scapy_flag(args)
 
     if not args.tcp and not args.udp:
@@ -450,7 +507,13 @@ async def main():
         args.workers = current_ulimit
         print(f"{Fore.YELLOW}Adjusting workers to: {args.workers}")
 
-    ports = parse_ports(args.ports) if args.ports else list(range(1, 65536))
+    if args.top_ports:
+        ports = load_top_ports(args.top_ports)
+        print(f"{Fore.CYAN}Scanning top {args.top_ports} ports")
+    elif args.ports:
+        ports = parse_ports(args.ports)
+    else:
+        ports = list(range(1, 65536))
     ips = shuffle_ips(await load_ips(args.ip))
     open_ports = []
 

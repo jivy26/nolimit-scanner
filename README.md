@@ -79,7 +79,11 @@ When service detection is enabled, a detailed table of services and versions is 
 
 To schedule a scan for future execution, use the `--schedule` option followed by the desired date and time in the format "MM/DD HH:MM". For example:
 
-This will schedule the scan to run on May 30th at 10:00 PM. The scheduling feature uses the 'at' command, so make sure it's installed and properly configured on your system.
+```bash
+python nolimit.py --top-ports 4000 -i ips.txt -t -w 1000 -srv --schedule "05/15 12:00"
+```
+
+This will schedule the scan to run on May 15th at 12PM. The scheduling feature uses the 'at' command, so make sure it's installed and properly configured on your system.
 
 ## Warnings and Ethical Use
 

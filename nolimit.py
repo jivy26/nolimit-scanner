@@ -3,10 +3,12 @@ import argparse
 import json
 import logging
 import os
+import pwd
 import random
 import resource
 import signal
 import subprocess
+import tempfile
 import sys
 import time
 from functools import lru_cache
@@ -16,9 +18,10 @@ from cryptography.utils import CryptographyDeprecationWarning
 from colorama import init, Fore
 from rich.console import Console
 from rich.table import Table
-from scapy.all import sr1, IP, TCP, UDP, fragment
+from scapy.all import *
 from tqdm import tqdm
 from datetime import datetime
+from collections import deque
 
 ## Start Utility Functions Section
 init(autoreset=True)
@@ -26,6 +29,9 @@ init(autoreset=True)
 warnings.filterwarnings("ignore", category=CryptographyDeprecationWarning)
 
 logging.basicConfig(filename='nmap_service_detection.log', level=logging.DEBUG,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+logging.basicConfig(filename='nolimit_scan.log', level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 REQUIRED_PACKAGES = ['tqdm', 'colorama', 'rich', 'aiofiles', 'scapy']
@@ -68,7 +74,7 @@ def shuffle_ips(ips):
 
 async def run_scapy_scan(command):
     """Run Scapy-related functions with sudo in a separate subprocess."""
-    cmd = ['sudo', sys.executable, '-c', command]
+    cmd = ['sudo', "-n",sys.executable, '-c', command]
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     stdout, stderr = await proc.communicate()
     if stderr:
@@ -124,21 +130,24 @@ async def save_open_ports(open_ports, protocol):
     web_urls_file = os.path.join(folder_name, "web-urls.txt")
     web_urls = set()
 
-    for ip, port, proto in sorted(open_ports, key=lambda x: (x[0], x[1])):
+    for ip, port, proto, technique in sorted(open_ports, key=lambda x: (x[0], x[1])):
         if proto == protocol:
-            if port in common_ports:
-                filename = os.path.join(folder_name, common_ports[port])
-                if filename not in port_files:
-                    port_files[filename] = set()
-                port_files[filename].add(ip)
-            else:
-                if other_ports_file not in port_files:
-                    port_files[other_ports_file] = set()
-                port_files[other_ports_file].add(f"{ip}:{port}")
-            
-            if port in web_ports:
-                protocol_prefix = "https" if port in {443, 8443, 10443} else "http"
-                web_urls.add(f"{protocol_prefix}://{ip}:{port}")
+            try:
+                if port in common_ports:
+                    filename = os.path.join(folder_name, common_ports[port])
+                    if filename not in port_files:
+                        port_files[filename] = set()
+                    port_files[filename].add(f"{ip} (Technique: {technique})")
+                else:
+                    if other_ports_file not in port_files:
+                        port_files[other_ports_file] = set()
+                    port_files[other_ports_file].add(f"{ip}:{port} (Technique: {technique})")
+                
+                if port in web_ports:
+                    protocol_prefix = "https" if port in {443, 8443, 10443} else "http"
+                    web_urls.add(f"{protocol_prefix}://{ip}:{port}")
+            except Exception as e:
+                print(f"Error processing open port {ip}:{port}: {str(e)}")
 
     for filename, ips in port_files.items():
         async with aiofiles.open(filename, 'w') as f:
@@ -175,53 +184,202 @@ async def load_progress():
 ## End of Utility Functions Section
 
 ## Scapy and Standard Port Scanning Section
-async def check_tcp_port_scapy(ip, port, open_ports):
-    source_port = random.randint(1024, 65535)
-    ttl = random.randint(40, 255)
-    flags = random.choice(['S', 'A', 'F', 'P', 'R'])
+class AdaptiveScanner:
+    def __init__(self, max_history=100):
+        self.technique_history = deque(maxlen=max_history)
+        self.successful_techniques = {}
+        self.technique_weights = {
+            'timing_scan': 1.0,
+            'protocol_manipulation_scan': 1.0,
+            'decoy_scan': 1.0,
+            'os_fingerprint_spoof_scan': 1.0,
+            'polymorphic_payload_scan': 1.0,
+            'timing_based_evasion_scan': 1.0,
+            'fragmentation_scan': 1.0,
+            'covert_channel_scan': 1.0
+        }
+        self.last_adjustment_time = time.time()
+        self.adjustment_interval = 60  # Adjust weights every 60 seconds
 
-    command = f"""
-from scapy.all import sr1, IP, TCP, fragment
-ip = '{ip}'
-port = {port}
-source_port = {source_port}
-ttl = {ttl}
-flags = '{flags}'
-packet = IP(dst=ip, version=4, ttl=ttl) / TCP(sport=source_port, dport=port, flags=flags)
-fragmented_packets = fragment(packet)
-for frag in fragmented_packets:
-    response = sr1(frag, timeout=1, verbose=0)
-    if response and response.haslayer(TCP) and response[TCP].flags == "SA":
-        print('OPEN')
-        break
-"""
-    result = await run_scapy_scan(command)
-    if "OPEN" in result:
+    async def adaptive_scan(self, ip, port):
+        techniques = [
+            self.timing_scan,
+            self.protocol_manipulation_scan,
+            self.decoy_scan,
+            self.os_fingerprint_spoof_scan,
+            self.polymorphic_payload_scan,
+            self.timing_based_evasion_scan,
+            self.fragmentation_scan,
+            self.covert_channel_scan
+        ]
+        
+        chosen_technique = random.choices(techniques, 
+                                        weights=[self.technique_weights[t.__name__] for t in techniques],
+                                        k=1)[0]
+        
+        try:
+            is_open, responses = await chosen_technique(ip, port)
+            if is_open:
+                self.successful_techniques[(ip, port)] = chosen_technique.__name__
+            
+            self.technique_history.append((chosen_technique.__name__, is_open))
+            
+            if time.time() - self.last_adjustment_time > self.adjustment_interval:
+                self.adjust_techniques()
+                self.last_adjustment_time = time.time()
+
+            return is_open, responses
+        except Exception as e:
+            logging.error(f"Error in adaptive_scan for {ip}:{port}: {str(e)}")
+            return False, []
+
+    async def send_probe(self, ip, port, packet=None):
+        if packet is None:
+            packet = IP(dst=ip) / TCP(dport=port, flags='S')
+        
+        try:
+            response = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: sr1(packet, timeout=2, verbose=0)
+            )
+            if isinstance(response, Packet):
+                is_open = response.haslayer(TCP) and response[TCP].flags & 0x12
+            else:
+                is_open = False
+            return is_open, response
+        except Exception as e:
+            logging.error(f"Error in send_probe: {e}")
+            return False, None
+
+    async def timing_scan(self, ip, port):
+        delay = random.expovariate(1/2)
+        await asyncio.sleep(delay)
+        is_open, response = await self.send_probe(ip, port)
+        return is_open, [response] if response else []
+
+    async def protocol_manipulation_scan(self, ip, port):
+        http_methods = ['GET', 'POST', 'HEAD', 'PUT', 'DELETE', 'OPTIONS']
+        method = random.choice(http_methods)
+        paths = ['/', '/index.html', '/api', '/login', '/about']
+        path = random.choice(paths)
+        host = f"{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}"
+        packet = IP(dst=ip) / TCP(sport=RandShort(), dport=port, flags='PA') / \
+                 Raw(f"{method} {path} HTTP/1.1\r\nHost: {host}\r\n\r\n".encode())
+        is_open, response = await self.send_probe(ip, port, packet)
+        return is_open, [response] if response else []
+
+    async def decoy_scan(self, ip, port):
+        decoys = [RandIP() for _ in range(5)]
+        target = IP(dst=ip)
+        packets = [target/TCP(sport=random.randint(1024, 65535), dport=port, flags="S") for _ in range(len(decoys) + 1)]
+        for i, p in enumerate(packets):
+            if i < len(decoys):
+                p[IP].src = decoys[i]
+        
+        loop = asyncio.get_event_loop()
+        try:
+            ans, unans = await loop.run_in_executor(None, lambda: sr(packets, timeout=2, verbose=0))
+            is_open = any(isinstance(r, Packet) and r.haslayer(TCP) and r[TCP].flags & 0x12 == 0x12 for _, r in ans)
+            return is_open, ans
+        except Exception as e:
+            logging.error(f"Error in decoy_scan for {ip}:{port}: {str(e)}")
+            return False, []
+
+    async def os_fingerprint_spoof_scan(self, ip, port):
+        os_fingerprints = [
+            # Windows 10
+            dict(window=64240, options=[('MSS', 1460), ('NOP', None), ('WScale', 8), ('NOP', None), ('NOP', None), ('Timestamp', (0, 0))]),
+            # Linux (Ubuntu)
+            dict(window=29200, options=[('MSS', 1460), ('SAckOK', ''), ('Timestamp', (0, 0)), ('NOP', None), ('WScale', 7)]),
+            # macOS
+            dict(window=65535, options=[('MSS', 1460), ('NOP', None), ('WScale', 6), ('NOP', None), ('NOP', None), ('Timestamp', (0, 0))])
+        ]
+        chosen_fingerprint = random.choice(os_fingerprints)
+        packet = IP(dst=ip) / TCP(dport=port, flags='S', **chosen_fingerprint)
+        is_open, response = await self.send_probe(ip, port, packet)
+        return is_open, [response] if response else []
+
+    async def polymorphic_payload_scan(self, ip, port):
+        payload = self.generate_polymorphic_payload()
+        packet = IP(dst=ip) / TCP(dport=port, flags='S') / Raw(load=payload)
+        is_open, response = await self.send_probe(ip, port, packet)
+        return is_open, [response] if response else []
+
+    def generate_polymorphic_payload(self):
+        base_payload = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+        mutations = [
+            lambda p: p.replace(b"GET", b"POST"),
+            lambda p: p.replace(b"HTTP/1.1", b"HTTP/1.0"),
+            lambda p: p + b"X-Custom-Header: " + os.urandom(10) + b"\r\n",
+            lambda p: p.replace(b"Host:", b"User-Agent:"),
+        ]
+        payload = base_payload
+        for _ in range(random.randint(1, len(mutations))):
+            mutation = random.choice(mutations)
+            payload = mutation(payload)
+        return payload
+
+    async def timing_based_evasion_scan(self, ip, port):
+        delays = [0.1, 0.5, 1.0, 2.0, 5.0]
+        for delay in delays:
+            await asyncio.sleep(delay)
+            packet = IP(dst=ip) / TCP(dport=port, flags='S')
+            is_open, response = await self.send_probe(ip, port, packet)
+            if is_open:
+                return True, [response]
+        return False, []
+
+    async def fragmentation_scan(self, ip, port):
+        packet = IP(dst=ip) / TCP(dport=port, flags='S')
+        frags = fragment(packet, fragsize=8)
+        responses = []
+        for frag in frags:
+            is_open, response = await self.send_probe(ip, port, frag)
+            if response:
+                responses.append(response)
+        is_open = any(r.haslayer(TCP) and r[TCP].flags & 0x12 == 0x12 for r in responses if r)
+        return is_open, responses
+
+    async def covert_channel_scan(self, ip, port):
+        covert_data = os.urandom(16)  # Random data to embed
+        packet = IP(dst=ip) / TCP(dport=port, flags='S', options=[('Timestamp', (int.from_bytes(covert_data[:4], 'big'), int.from_bytes(covert_data[4:8], 'big')))])
+        packet[IP].id = int.from_bytes(covert_data[8:10], 'big')
+        packet[TCP].seq = int.from_bytes(covert_data[10:14], 'big')
+        packet[TCP].window = int.from_bytes(covert_data[14:16], 'big')
+        is_open, response = await self.send_probe(ip, port, packet)
+        return is_open, [response] if response else []
+
+    def adjust_techniques(self):
+        if not self.technique_history:
+            return
+
+        success_rates = {}
+        for technique in self.technique_weights.keys():
+            successes = sum(1 for t, result in self.technique_history if t == technique and result)
+            attempts = sum(1 for t, _ in self.technique_history if t == technique)
+            success_rates[technique] = successes / attempts if attempts > 0 else 0
+
+        total_success_rate = sum(success_rates.values())
+        if total_success_rate > 0:
+            for technique, rate in success_rates.items():
+                self.technique_weights[technique] = (rate / total_success_rate) + 0.1
+
+        total_weight = sum(self.technique_weights.values())
+        for technique in self.technique_weights:
+            self.technique_weights[technique] /= total_weight
+
+        logging.info(f"Adjusted technique weights: {self.technique_weights}")
+
+async def check_tcp_port_scapy(ip, port, open_ports, adaptive_scanner):
+    if await adaptive_scanner.adaptive_scan(ip, port):
         open_ports.append((ip, port, 'tcp'))
         tqdm.write(f"{Fore.GREEN}TCP {ip}:{port} is open")
+        logging.info(f"TCP {ip}:{port} is open.")
 
-async def check_udp_port_scapy(ip, port, open_ports):
-    source_port = random.randint(1024, 65535)
-    ttl = random.randint(40, 255)
-
-    command = f"""
-from scapy.all import sr1, IP, UDP, fragment
-ip = '{ip}'
-port = {port}
-source_port = {source_port}
-ttl = {ttl}
-packet = IP(dst=ip, version=4, ttl=ttl) / UDP(sport=source_port, dport=port)
-fragmented_packets = fragment(packet)
-for frag in fragmented_packets:
-    response = sr1(frag, timeout=1, verbose=0)
-    if response is None or response.haslayer(UDP):
-        print('OPEN')
-        break
-"""
-    result = await run_scapy_scan(command)
-    if "OPEN" in result:
+async def check_udp_port_scapy(ip, port, open_ports, adaptive_scanner):
+    if await adaptive_scanner.adaptive_scan(ip, port):
         open_ports.append((ip, port, 'udp'))
         tqdm.write(f"{Fore.GREEN}UDP {ip}:{port} is open")
+        logging.info(f"UDP {ip}:{port} is open.")
 
 async def check_tcp_port(ip, port, open_ports):
     try:
@@ -229,6 +387,7 @@ async def check_tcp_port(ip, port, open_ports):
         reader, writer = await asyncio.wait_for(conn, timeout=1.0)
         open_ports.append((ip, port, 'tcp'))
         tqdm.write(f"{Fore.GREEN}TCP {ip}:{port} is open")
+        logging.info(f"TCP {ip}:{port} is open. Connection established successfully.")
         writer.close()
         await writer.wait_closed()
     except (asyncio.TimeoutError, ConnectionRefusedError):
@@ -260,6 +419,7 @@ async def check_udp_port(ip, port, open_ports):
             await asyncio.wait_for(protocol.received_data.wait(), timeout=1.0)
             open_ports.append((ip, port, 'udp'))
             tqdm.write(f"{Fore.GREEN}UDP {ip}:{port} is open")
+            logging.info(f"UDP {ip}:{port} is open. Received response from server.")
         except asyncio.TimeoutError:
             pass  # Port is likely closed or filtered
         finally:
@@ -268,33 +428,55 @@ async def check_udp_port(ip, port, open_ports):
         tqdm.write(f"{Fore.RED}Error checking UDP {ip}:{port} - {e}")
 
 async def scan_ports(ip, ports, protocol, progress, open_ports, max_workers, use_scapy=False, use_adaptive=False, rate_limit=None):
-    if use_adaptive:
-        await adaptive_scan(ip, ports, protocol, progress, open_ports, max_workers, use_scapy, rate_limit)
-    else:
-        sem = asyncio.Semaphore(max_workers)
+    sem = asyncio.Semaphore(max_workers)
 
-        async def scan_with_semaphore(port):
-            async with sem:
-                if protocol == 'tcp':
-                    if use_scapy:
-                        await check_tcp_port_scapy(ip, port, open_ports)
+    if use_scapy and use_adaptive:
+        adaptive_scanner = AdaptiveScanner()
+    else:
+        adaptive_scanner = None
+
+    async def scan_with_semaphore(port):
+        async with sem:
+            try:
+                if use_scapy:
+                    if use_adaptive:
+                        is_open, responses = await adaptive_scanner.adaptive_scan(ip, port)
                     else:
-                        await check_tcp_port(ip, port, open_ports)
-                elif protocol == 'udp':
-                    if use_scapy:
-                        await check_udp_port_scapy(ip, port, open_ports)
-                    else:
-                        await check_udp_port(ip, port, open_ports)
+                        is_open, responses = await adaptive_scanner.decoy_scan(ip, port)
+                    
+                    if is_open:
+                        technique = adaptive_scanner.successful_techniques.get((ip, port), "Unknown") if use_adaptive else "decoy_scan"
+                        open_ports.append((ip, port, protocol, technique))
+                        logging.info(f"{protocol.upper()} {ip}:{port} is open (Technique: {technique})")
+                else:
+                    if protocol == 'tcp':
+                        is_open = await check_tcp_port(ip, port, open_ports)
+                    elif protocol == 'udp':
+                        is_open = await check_udp_port(ip, port, open_ports)
+                    
+                    if is_open:
+                        open_ports.append((ip, port, protocol, "standard"))
+                        logging.info(f"{protocol.upper()} {ip}:{port} is open")
+                
                 progress.update(1)
                 if rate_limit:
                     await asyncio.sleep(1 / rate_limit)
+            except Exception as e:
+                logging.error(f"Error scanning {ip}:{port} - {str(e)}")
 
-        await asyncio.gather(*[scan_with_semaphore(port) for port in ports])
+    await asyncio.gather(*[scan_with_semaphore(port) for port in ports])
+
+    if use_scapy and use_adaptive:
+        adaptive_scanner.adjust_techniques()
 
 ## End of Scapy and Standard Port Scanning Section
 
 ## Nmap Service Detection Section
 async def nmap_service_detection(open_ports, protocol, folder_name):
+    if not open_ports:
+        print(f"{Fore.YELLOW}No open ports found. Skipping service detection.")
+        return
+
     clear_screen()
     console = Console()
     table = Table(show_header=True, header_style="bold cyan")
@@ -352,7 +534,7 @@ async def nmap_service_detection(open_ports, protocol, folder_name):
     print(f"{Fore.YELLOW}Summary saved to: {summary_file}")
 
 async def run_nmap_scan(ip, port):
-    cmd = ["sudo", "nmap", "-sV", "-p", str(port), ip, "-Pn", "-T4"]
+    cmd = ["sudo", "-n", "nmap", "-sV", "-p", str(port), ip, "-Pn", "-T4"]
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -416,20 +598,97 @@ def load_top_ports(n):
 ## End of Utilize NMAP Top Ports 
 
 def schedule_scan(args, schedule_time):
-    script_path = os.path.abspath(__file__)
-    command = f"python {script_path} {' '.join(sys.argv[1:])}"
-    
-    # Format the at command
-    at_command = f"echo '{command}' | at {schedule_time}"
-    
     try:
-        subprocess.run(at_command, shell=True, check=True)
-        print(f"{Fore.GREEN}Scan scheduled for {schedule_time}")
-    except subprocess.CalledProcessError:
-        print(f"{Fore.RED}Failed to schedule the scan. Make sure 'at' is installed and you have the necessary permissions.")
+        script_path = os.path.abspath(__file__)
+        current_dir = os.getcwd()
+        current_user = pwd.getpwuid(os.getuid()).pw_name
+        
+        # Get the full path of the ips.txt file
+        ips_file_path = os.path.abspath(args.ip)
+        
+        # Escape special characters in the command and quote the entire argument string
+        escaped_args = ' '.join(f"'{arg}'" if arg != args.ip else f"'{ips_file_path}'" for arg in sys.argv[1:])
+        command = f"python3 '{script_path}' {escaped_args}"
+        
+        job_name = f"nolimit_scan_{int(time.time())}"
+        
+        logging.info(f"Current user: {current_user}")
+        
+        service_content = f"""[Unit]
+Description=NoLimit Port Scanner Job
+
+[Service]
+Type=oneshot
+ExecStart={command}
+User={current_user}
+WorkingDirectory={current_dir}
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+[Install]
+WantedBy=multi-user.target
+"""
+        
+        timer_content = f"""[Unit]
+Description=Timer for NoLimit Port Scanner Job
+
+[Timer]
+OnCalendar={schedule_time}
+Unit={job_name}.service
+
+[Install]
+WantedBy=timers.target
+"""
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.service') as service_file, \
+             tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.timer') as timer_file:
+            service_file.write(service_content)
+            timer_file.write(timer_content)
+            service_file_path = service_file.name
+            timer_file_path = timer_file.name
+        
+        try:
+            print(f"{Fore.YELLOW}Attempting to schedule the scan. You may be prompted for your sudo password.")
+            subprocess.run(['sudo', 'cp', service_file_path, f'/etc/systemd/system/{job_name}.service'], check=True)
+            subprocess.run(['sudo', 'cp', timer_file_path, f'/etc/systemd/system/{job_name}.timer'], check=True)
+            
+            subprocess.run(['sudo', 'systemctl', 'daemon-reload'], check=True)
+            subprocess.run(['sudo', 'systemctl', 'enable', f'{job_name}.timer'], check=True)
+            subprocess.run(['sudo', 'systemctl', 'start', f'{job_name}.timer'], check=True)
+            
+            print(f"{Fore.GREEN}Scan scheduled for {schedule_time}")
+            print(f"{Fore.YELLOW}To check status, run: sudo systemctl status {job_name}.timer")
+            print(f"{Fore.YELLOW}To see all scheduled scans, run: sudo systemctl list-timers")
+            print(f"{Fore.YELLOW}To manually start the service, run: sudo systemctl start {job_name}.service")
+            print(f"{Fore.YELLOW}To view service logs, run: sudo journalctl -u {job_name}.service")
+            print(f"{Fore.YELLOW}To view script output, run: cat {os.path.join(current_dir, 'nolimit_scan.log')}")
+            print(f"{Fore.YELLOW}Output files will be generated in: {current_dir}")
+            
+            logging.info(f"Scan scheduled for {schedule_time}")
+            logging.info(f"Job name: {job_name}")
+            logging.info(f"Working directory: {current_dir}")
+            logging.info(f"Service file: /etc/systemd/system/{job_name}.service")
+            logging.info(f"Timer file: /etc/systemd/system/{job_name}.timer")
+        except subprocess.CalledProcessError as e:
+            error_message = f"Failed to schedule the scan. Error: {str(e)}"
+            print(f"{Fore.RED}{error_message}")
+            logging.error(error_message)
+            print(f"{Fore.YELLOW}If you're having permission issues, try running the entire script with sudo:")
+            print(f"{Fore.YELLOW}sudo python3 {script_path} {' '.join(sys.argv[1:])}")
+            raise
+        finally:
+            os.unlink(service_file_path)
+            os.unlink(timer_file_path)
+    
+    except Exception as e:
+        error_message = f"An error occurred while scheduling the scan: {str(e)}"
+        print(f"{Fore.RED}{error_message}")
+        logging.error(error_message)
+        logging.exception("Exception details:")
         sys.exit(1)
 
 async def main():
+    is_scheduled_run = os.environ.get('NOLIMIT_SCHEDULED_RUN') == 'true'
     ascii_logo = '''
     _   _       _     _           _ _   
    | \ | |     | |   (_)         (_) |  
@@ -471,7 +730,7 @@ async def main():
 
     args = parser.parse_args()
 
-    if args.schedule:
+    if args.schedule and not is_scheduled_run:
         try:
             schedule_datetime = datetime.strptime(args.schedule, "%m/%d %H:%M")
             current_year = datetime.now().year
@@ -480,12 +739,13 @@ async def main():
             if schedule_datetime <= datetime.now():
                 schedule_datetime = schedule_datetime.replace(year=current_year + 1)
             
-            schedule_time = schedule_datetime.strftime("%H:%M %m/%d/%Y")
+            schedule_time = schedule_datetime.strftime("%Y-%m-%d %H:%M:00")
             schedule_scan(args, schedule_time)
             return
         except ValueError:
             print(f"{Fore.RED}Invalid date format. Please use MM/DD HH:MM")
             sys.exit(1)
+
     use_scapy = check_scapy_flag(args)
 
     if not args.tcp and not args.udp:
@@ -549,9 +809,9 @@ async def main():
         with tqdm(total=total_scans, desc="Scanning Progress", unit="scan", leave=True, position=1) as progress:
             for ip in ips:
                 if args.tcp:
-                    await scan_ports(ip, ports, 'tcp', progress, open_ports, args.workers, use_scapy)
+                    await scan_ports(ip, ports, 'tcp', progress, open_ports, args.workers, use_scapy, args.adaptive, args.rate_limit)
                 if args.udp: 
-                    await scan_ports(ip, ports, 'udp', progress, open_ports, args.workers, use_scapy)
+                    await scan_ports(ip, ports, 'udp', progress, open_ports, args.workers, use_scapy, args.adaptive, args.rate_limit)
 
         tcp_folder = None
         udp_folder = None
@@ -575,7 +835,8 @@ async def main():
 
         print(f"{Fore.GREEN}\nScan completed.")
         print(f"{Fore.YELLOW}Open ports found: {len(open_ports)}")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
+        for ip, port, protocol, technique in open_ports:
+            print(f"{Fore.CYAN}{protocol.upper()} {ip}:{port} - Technique: {technique}")
 
     except Exception as e:
         print(f"{Fore.RED}\nAn error occurred: {str(e)}")

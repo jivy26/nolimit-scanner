@@ -183,6 +183,80 @@ async def load_progress():
 
 ## End of Utility Functions Section
 
+## Evasion Script Creation Section
+async def create_evasion_script(open_ports, folder_name):
+    script_content = """
+from scapy.all import *
+import asyncio
+import subprocess
+
+async def run_nmap_scan(ip, port):
+    cmd = ["sudo", "nmap", "-sV", "-p", str(port), ip, "-Pn", "-T4"]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await proc.communicate()
+    return stdout.decode()
+
+async def evasion_scan(ip, port, technique):
+    print(f"Scanning {ip}:{port} using {technique}")
+    
+    if technique == "os_fingerprint_spoof_scan":
+        packet = IP(dst=ip) / TCP(dport=port, flags='S', window=64240, options=[('MSS', 1460), ('NOP', None), ('WScale', 8), ('NOP', None), ('NOP', None), ('Timestamp', (0, 0))])
+    elif technique == "polymorphic_payload_scan":
+        payload = b"GET / HTTP/1.1\\r\\nHost: example.com\\r\\n\\r\\n"
+        packet = IP(dst=ip) / TCP(dport=port, flags='S') / Raw(load=payload)
+    elif technique == "timing_based_evasion_scan":
+        packet = IP(dst=ip) / TCP(dport=port, flags='S')
+        time.sleep(random.uniform(0.1, 1.0))
+    elif technique == "fragmentation_scan":
+        packet = IP(dst=ip) / TCP(dport=port, flags='S')
+        frags = fragment(packet, fragsize=8)
+        for frag in frags:
+            send(frag, verbose=0)
+        return
+    elif technique == "covert_channel_scan":
+        covert_data = os.urandom(16)
+        packet = IP(dst=ip) / TCP(dport=port, flags='S', options=[('Timestamp', (int.from_bytes(covert_data[:4], 'big'), int.from_bytes(covert_data[4:8], 'big')))])
+    else:
+        packet = IP(dst=ip) / TCP(dport=port, flags='S')
+    
+    response = sr1(packet, timeout=2, verbose=0)
+    
+    if response and response.haslayer(TCP) and response[TCP].flags & 0x12:
+        print(f"Port {port} is open")
+        nmap_result = await run_nmap_scan(ip, port)
+        print(f"Nmap result:\\n{nmap_result}")
+    else:
+        print(f"Port {port} is closed or filtered")
+
+async def main():
+    tasks = [
+{tasks}
+    ]
+    await asyncio.gather(*tasks)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+"""
+    
+    tasks = []
+    for ip, port, protocol, technique in open_ports:
+        if protocol == 'tcp':
+            tasks.append(f"        evasion_scan('{ip}', {port}, '{technique}')")
+    
+    script_content = script_content.replace("{tasks}", ",\n".join(tasks))
+    
+    script_file = os.path.join(folder_name, "evasion_script.py")
+    async with aiofiles.open(script_file, 'w') as f:
+        await f.write(script_content)
+    
+    print(f"{Fore.YELLOW}Evasion script created: {script_file}")
+    print(f"{Fore.YELLOW}Run it with: sudo python3 {script_file}")
+## End of Evasion Script Creation Section
+
 ## Scapy and Standard Port Scanning Section
 class AdaptiveScanner:
     def __init__(self, max_history=100):
@@ -821,8 +895,13 @@ async def main():
         if args.udp:
             udp_folder = await save_open_ports(open_ports, 'udp')
 
+        if args.scapy and args.adaptive:
+            folder_name = tcp_folder if tcp_folder else udp_folder
+            await create_evasion_script(open_ports, folder_name)
+
         if args.service:
             if args.tcp:
+
                 print(f"{Fore.CYAN}\nStarting TCP service detection...")
                 await nmap_service_detection(open_ports, 'tcp', tcp_folder)
                 

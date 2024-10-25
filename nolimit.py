@@ -130,18 +130,18 @@ async def save_open_ports(open_ports, protocol):
     web_urls_file = os.path.join(folder_name, "web-urls.txt")
     web_urls = set()
 
-    for ip, port, proto, technique in sorted(open_ports, key=lambda x: (x[0], x[1])):
+    for ip, port, proto, _ in sorted(open_ports, key=lambda x: (x[0], x[1])):
         if proto == protocol:
             try:
                 if port in common_ports:
                     filename = os.path.join(folder_name, common_ports[port])
                     if filename not in port_files:
                         port_files[filename] = set()
-                    port_files[filename].add(f"{ip} (Technique: {technique})")
+                    port_files[filename].add(f"{ip}")
                 else:
                     if other_ports_file not in port_files:
                         port_files[other_ports_file] = set()
-                    port_files[other_ports_file].add(f"{ip}:{port} (Technique: {technique})")
+                    port_files[other_ports_file].add(f"{ip}:{port}")
                 
                 if port in web_ports:
                     protocol_prefix = "https" if port in {443, 8443, 10443} else "http"
@@ -186,21 +186,25 @@ async def load_progress():
 ## Evasion Script Creation Section
 async def create_evasion_script(open_ports, folder_name):
     script_content = """
-from scapy.all import *
 import asyncio
 import subprocess
+from scapy.all import *
+import random
+import sys
 
-async def run_nmap_scan(ip, port):
-    cmd = ["sudo", "nmap", "-sV", "-p", str(port), ip, "-Pn", "-T4"]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
+async def run_external_tool(ip, port, tool_command):
+    print(f"Running {tool_command} for {ip}:{port}")
+    process = await asyncio.create_subprocess_shell(
+        tool_command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
-    stdout, stderr = await proc.communicate()
-    return stdout.decode()
+    stdout, stderr = await process.communicate()
+    print(f"Tool output:\\n{stdout.decode()}")
+    if stderr:
+        print(f"Tool error:\\n{stderr.decode()}")
 
-async def evasion_scan(ip, port, technique):
+async def evasion_scan(ip, port, technique, tool_command=None):
     print(f"Scanning {ip}:{port} using {technique}")
     
     if technique == "os_fingerprint_spoof_scan":
@@ -232,7 +236,16 @@ async def evasion_scan(ip, port, technique):
     else:
         print(f"Port {port} is closed or filtered")
 
+    if tool_command:
+        await run_external_tool(ip, port, tool_command)
+
 async def main():
+    if len(sys.argv) < 2:
+        print("Usage: python evasion_script.py [tool_command]")
+        sys.exit(1)
+    
+    tool_command = sys.argv[1] if len(sys.argv) > 1 else None
+    
     tasks = [
 {tasks}
     ]
@@ -245,7 +258,7 @@ if __name__ == "__main__":
     tasks = []
     for ip, port, protocol, technique in open_ports:
         if protocol == 'tcp':
-            tasks.append(f"        evasion_scan('{ip}', {port}, '{technique}')")
+            tasks.append(f"        evasion_scan('{ip}', {port}, '{technique}', tool_command)")
     
     script_content = script_content.replace("{tasks}", ",\n".join(tasks))
     
@@ -254,7 +267,7 @@ if __name__ == "__main__":
         await f.write(script_content)
     
     print(f"{Fore.YELLOW}Evasion script created: {script_file}")
-    print(f"{Fore.YELLOW}Run it with: sudo python3 {script_file}")
+    print(f"{Fore.YELLOW}Run it with: sudo python3 {script_file} 'nc [ip] [port]'")
 ## End of Evasion Script Creation Section
 
 ## Scapy and Standard Port Scanning Section
@@ -444,30 +457,53 @@ class AdaptiveScanner:
         logging.info(f"Adjusted technique weights: {self.technique_weights}")
 
 async def check_tcp_port_scapy(ip, port, open_ports, adaptive_scanner):
-    if await adaptive_scanner.adaptive_scan(ip, port):
-        open_ports.append((ip, port, 'tcp'))
-        tqdm.write(f"{Fore.GREEN}TCP {ip}:{port} is open")
-        logging.info(f"TCP {ip}:{port} is open.")
+    is_open = False
+    technique = "Unknown"
+    if adaptive_scanner:
+        is_open, _ = await adaptive_scanner.adaptive_scan(ip, port)
+        technique = adaptive_scanner.successful_techniques.get((ip, port), "Unknown")
+    else:
+        is_open, _ = await AdaptiveScanner().decoy_scan(ip, port)
+        technique = "decoy_scan"
+    
+    if is_open:
+        open_ports.append((ip, port, 'tcp', technique))
+        tqdm.write(f"{Fore.GREEN}TCP {ip}:{port} is open (Technique: {technique})")
+        logging.info(f"TCP {ip}:{port} is open (Technique: {technique}).")
 
 async def check_udp_port_scapy(ip, port, open_ports, adaptive_scanner):
-    if await adaptive_scanner.adaptive_scan(ip, port):
-        open_ports.append((ip, port, 'udp'))
-        tqdm.write(f"{Fore.GREEN}UDP {ip}:{port} is open")
-        logging.info(f"UDP {ip}:{port} is open.")
+    is_open = False
+    technique = "Unknown"
+    if adaptive_scanner:
+        is_open, _ = await adaptive_scanner.adaptive_scan(ip, port)
+        technique = adaptive_scanner.successful_techniques.get((ip, port), "Unknown")
+    else:
+        is_open, _ = await AdaptiveScanner().decoy_scan(ip, port)
+        technique = "decoy_scan"
+    
+    if is_open:
+        open_ports.append((ip, port, 'udp', technique))
+        tqdm.write(f"{Fore.GREEN}UDP {ip}:{port} is open (Technique: {technique})")
+        logging.info(f"UDP {ip}:{port} is open (Technique: {technique}).")
 
 async def check_tcp_port(ip, port, open_ports):
     try:
         conn = asyncio.open_connection(ip, port)
         reader, writer = await asyncio.wait_for(conn, timeout=1.0)
-        open_ports.append((ip, port, 'tcp'))
+        open_ports.append((ip, port, 'tcp', 'standard'))
         tqdm.write(f"{Fore.GREEN}TCP {ip}:{port} is open")
         logging.info(f"TCP {ip}:{port} is open. Connection established successfully.")
         writer.close()
         await writer.wait_closed()
     except (asyncio.TimeoutError, ConnectionRefusedError):
         pass
+    except OSError as e:
+        if e.errno == 113:  # Connect call failed
+            logging.debug(f"Connection failed for TCP {ip}:{port} - {e}")
+        else:
+            logging.error(f"Unexpected error checking TCP {ip}:{port} - {e}")
     except Exception as e:
-        tqdm.write(f"{Fore.RED}Error checking TCP {ip}:{port} - {e}")
+        logging.error(f"Unexpected error checking TCP {ip}:{port} - {e}")
 
 class UDPProtocol(asyncio.DatagramProtocol):
     def __init__(self):
@@ -491,21 +527,26 @@ async def check_udp_port(ip, port, open_ports):
         protocol.transport.sendto(b'')
         try:
             await asyncio.wait_for(protocol.received_data.wait(), timeout=1.0)
-            open_ports.append((ip, port, 'udp'))
+            open_ports.append((ip, port, 'udp', 'standard'))
             tqdm.write(f"{Fore.GREEN}UDP {ip}:{port} is open")
             logging.info(f"UDP {ip}:{port} is open. Received response from server.")
         except asyncio.TimeoutError:
             pass  # Port is likely closed or filtered
         finally:
             protocol.transport.close()
+    except OSError as e:
+        if e.errno == 113:  # Connect call failed
+            logging.debug(f"Connection failed for UDP {ip}:{port} - {e}")
+        else:
+            logging.error(f"Unexpected error checking UDP {ip}:{port} - {e}")
     except Exception as e:
-        tqdm.write(f"{Fore.RED}Error checking UDP {ip}:{port} - {e}")
+        logging.error(f"Unexpected error checking UDP {ip}:{port} - {e}")
 
 async def scan_ports(ip, ports, protocol, progress, open_ports, max_workers, use_scapy=False, use_adaptive=False, rate_limit=None):
     sem = asyncio.Semaphore(max_workers)
 
-    if use_scapy and use_adaptive:
-        adaptive_scanner = AdaptiveScanner()
+    if use_scapy:
+        adaptive_scanner = AdaptiveScanner() if use_adaptive else None
     else:
         adaptive_scanner = None
 
@@ -513,24 +554,15 @@ async def scan_ports(ip, ports, protocol, progress, open_ports, max_workers, use
         async with sem:
             try:
                 if use_scapy:
-                    if use_adaptive:
-                        is_open, responses = await adaptive_scanner.adaptive_scan(ip, port)
-                    else:
-                        is_open, responses = await adaptive_scanner.decoy_scan(ip, port)
-                    
-                    if is_open:
-                        technique = adaptive_scanner.successful_techniques.get((ip, port), "Unknown") if use_adaptive else "decoy_scan"
-                        open_ports.append((ip, port, protocol, technique))
-                        logging.info(f"{protocol.upper()} {ip}:{port} is open (Technique: {technique})")
+                    if protocol == 'tcp':
+                        await check_tcp_port_scapy(ip, port, open_ports, adaptive_scanner)
+                    elif protocol == 'udp':
+                        await check_udp_port_scapy(ip, port, open_ports, adaptive_scanner)
                 else:
                     if protocol == 'tcp':
-                        is_open = await check_tcp_port(ip, port, open_ports)
+                        await check_tcp_port(ip, port, open_ports)
                     elif protocol == 'udp':
-                        is_open = await check_udp_port(ip, port, open_ports)
-                    
-                    if is_open:
-                        open_ports.append((ip, port, protocol, "standard"))
-                        logging.info(f"{protocol.upper()} {ip}:{port} is open")
+                        await check_udp_port(ip, port, open_ports)
                 
                 progress.update(1)
                 if rate_limit:
@@ -562,7 +594,7 @@ async def nmap_service_detection(open_ports, protocol, folder_name):
     protocol_name = "TCP" if protocol == "tcp" else "UDP"
     console.print(f"{Fore.CYAN}\nStarting Nmap service detection for {protocol_name} ports...")
 
-    total_ports = sum(1 for _, _, proto in open_ports if proto == protocol)
+    total_ports = sum(1 for _, _, proto, _ in open_ports if proto == protocol)
 
     summary_data = []
 
@@ -576,7 +608,7 @@ async def nmap_service_detection(open_ports, protocol, folder_name):
 
     with tqdm(total=total_ports, desc="Service Detection Progress", unit="port", leave=True) as progress:
         tasks = []
-        for ip, port, proto in open_ports:
+        for ip, port, proto, _ in open_ports:
             if proto == protocol:
                 tasks.append(scan_and_update(ip, port))
         
@@ -763,7 +795,7 @@ WantedBy=timers.target
 
 async def main():
     is_scheduled_run = os.environ.get('NOLIMIT_SCHEDULED_RUN') == 'true'
-    ascii_logo = '''
+    ascii_logo = r'''
     _   _       _     _           _ _   
    | \ | |     | |   (_)         (_) |  
    |  \| | ___ | |    _ _ __ ___  _| |_ 
@@ -800,6 +832,7 @@ async def main():
     parser.add_argument('--adaptive', action='store_true', help='Use adaptive scanning. Automatically adjusts worker count based on open ports found.')
     parser.add_argument('--rate-limit', type=float, help='Rate limit in packets per second')
     parser.add_argument('--schedule', type=str, help='Schedule the scan for a future time (format: "MM/DD HH:MM")')
+    parser.add_argument('-l', '--log', help='Log file to save scan results', type=str)
 
 
     args = parser.parse_args()
@@ -879,6 +912,8 @@ async def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    print(f"{Fore.CYAN}Scan started. Any errors will be logged to 'nolimit_errors.log'.")
+
     try:
         with tqdm(total=total_scans, desc="Scanning Progress", unit="scan", leave=True, position=1) as progress:
             for ip in ips:
@@ -918,7 +953,9 @@ async def main():
             print(f"{Fore.CYAN}{protocol.upper()} {ip}:{port} - Technique: {technique}")
 
     except Exception as e:
-        print(f"{Fore.RED}\nAn error occurred: {str(e)}")
+        print(f"{Fore.RED}\nAn unexpected error occurred: {str(e)}")
+        print(f"{Fore.YELLOW}Check 'nolimit_errors.log' for more details.")
+        logging.error(f"Unexpected error in main: {str(e)}", exc_info=True)
         print(f"{Fore.YELLOW}Attempting to save partial results...")
         if args.tcp:
             await save_open_ports(open_ports, 'tcp')
@@ -926,5 +963,8 @@ async def main():
             await save_open_ports(open_ports, 'udp')
         sys.exit(1)
 
+    print(f"{Fore.YELLOW}Scan completed. Check 'nolimit_errors.log' for any errors that occurred during the scan.")
+
 if __name__ == "__main__":
     asyncio.run(main())
+

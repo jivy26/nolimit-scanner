@@ -4,18 +4,18 @@ NoLimit: An advanced, asynchronous port scanner and service enumerator built in 
 
 ## Features
 
-- **Asynchronous Scanning**: Utilizes Python's asyncio for high-performance, concurrent scanning.
-- **TCP and UDP Support**: Scan both TCP and UDP ports with a single tool.
-- **Service Detection**: Integrates with Nmap for accurate service and version detection.
-- **Scapy Integration**: Optional use of Scapy for customized packet crafting to evade firewalls.
-- **Adaptive Scanning**: Automatically adjusts worker count based on open ports found for optimal performance.
-- **Resume Functionality**: Ability to resume interrupted scans from the last saved progress.
-- **Rate Limiting**: Control scan intensity to avoid overwhelming target networks.
-- **Customizable Workers**: Adjust the number of concurrent workers to balance speed and resource usage.
-- **Progress Tracking**: Real-time progress bar and ETA using tqdm.
-- **Colorized Output**: Easy-to-read, color-coded console output for better visibility.
-- **Top Ports Scanning**: Option to scan only the most common ports as defined by Nmap.
-- **Scan Scheduling**: Ability to schedule scans for future execution using the 'at' command.
+- **High-Speed Scanning**
+  - Asynchronous engine with customizable worker counts
+  - Built-in service fingerprinting
+  - Banner grabbing with protocol detection
+  - TCP/UDP support with rate limiting
+
+- **Advanced Capabilities**
+  - Quick scan profiles for common services
+  - Dual progress tracking system
+  - Adaptive scanning with auto-adjustment
+  - Token bucket algorithm for traffic control
+  - Service version detection with nmap integration
 
 ## Installation
 
@@ -43,18 +43,21 @@ This example scans TCP ports 1-4000 for IPs listed in ips.txt, using 1000 worker
 
 ### Options
 
-- `-p, --ports`: Ports to scan (e.g., "80,443" or "1-1024"). Default: all ports.
-- `--top-ports`: Scan only the top N most common ports (e.g., --top-ports 100).
-- `-i, --ip`: [Required] Single IP or file with list of IPs to scan.
-- `-t, --tcp`: Enable TCP port scanning.
-- `-u, --udp`: Enable UDP port scanning.
-- `-srv, --service`: Enable service detection with Nmap.
-- `-w, --workers`: Number of concurrent workers (default: 500).
-- `--scapy`: Use Scapy for scanning (helps evade firewalls). **Recommend running against only tcpwrapped ports identified, as running on all ports will take a while**
-- `--resume`: Resume from the last saved progress.
-- `--adaptive`: Use adaptive scanning to adjust worker count dynamically.
-- `--rate-limit`: Set rate limit in packets per second.
-- `--schedule`: Schedule the scan for a future time (format: "MM/DD HH:MM").
+### Options
+
+- `-p, --ports`: Ports to scan (e.g., "80,443" or "1-1024"). Default: all ports
+- `--top-ports`: Scan only the top N most common ports (e.g., --top-ports 100)
+- `-i, --ip`: Target IP address or file containing list of IPs
+- `-t, --tcp`: Enable TCP port scanning
+- `-u, --udp`: Enable UDP port scanning
+- `-srv, --service`: Enable service detection (requires sudo)
+- `-w, --workers`: Number of concurrent workers (default: 500)
+- `--quick`: Use predefined scan profiles (web, remote, database, mail, all)
+- `--scapy`: Enable experimental evasion techniques
+- `--adaptive`: Dynamic worker count adjustment
+- `--rate-limit`: Control packets per second
+- `--resume`: Resume from last saved progress
+- `-l, --log`: Specify log file for scan results
 
 ## Output
 

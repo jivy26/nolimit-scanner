@@ -498,7 +498,6 @@ async def grab_banner(ip, port, protocol):
                 timeout=3.0
             )
             
-            # Send common protocol probes
             probes = [
                 b'HEAD / HTTP/1.0\r\n\r\n',
                 b'GET / HTTP/1.0\r\n\r\n',
@@ -628,7 +627,6 @@ async def fingerprint_service(ip, port, protocol):
         logging.debug(f"Service fingerprint failed for {ip}:{port}/{protocol} - {str(e)}")
         return None
 
-# Modify check_tcp_port function to include service fingerprinting
 async def check_tcp_port(ip, port, open_ports):
     try:
         conn = asyncio.open_connection(ip, port)
@@ -709,7 +707,6 @@ async def check_udp_port(ip, port, open_ports):
 async def scan_ports(ip, ports, protocol, progress, open_ports, max_workers, use_scapy=False, use_adaptive=False, rate_limit=None):
     sem = asyncio.Semaphore(max_workers)
     
-    # Add rate limiter using token bucket algorithm
     class RateLimiter:
         def __init__(self, rate):
             self.rate = rate

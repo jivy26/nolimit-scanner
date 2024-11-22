@@ -22,8 +22,9 @@ from scapy.all import *
 from tqdm import tqdm
 from datetime import datetime
 from collections import deque
+import ipaddress
 
-## Start Utility Functions Section
+
 init(autoreset=True)
 
 warnings.filterwarnings("ignore", category=CryptographyDeprecationWarning)
@@ -82,15 +83,22 @@ async def run_scapy_scan(command):
     return stdout.decode()
 
 async def load_ips(ip_input):
-    if os.path.isfile(ip_input):
-        try:
-            async with aiofiles.open(ip_input, 'r') as f:
-                return [line.strip() for line in await f.readlines()]
-        except IOError as e:
-            print(f"{Fore.RED}Error reading IP file: {e}")
-            sys.exit(1)
-    else:
+    try:
+
+        ipaddress.ip_address(ip_input)
         return [ip_input]
+    except ValueError:
+
+        if os.path.isfile(ip_input):
+            try:
+                async with aiofiles.open(ip_input, 'r') as f:
+                    return [line.strip() for line in await f.readlines()]
+            except IOError as e:
+                print(f"{Fore.RED}Error reading IP file: {e}")
+                sys.exit(1)
+        else:
+            print(f"{Fore.RED}Error: The specified IP file '{ip_input}' does not exist in the current working directory.")
+            sys.exit(1)
 
 def parse_ports(ports_arg):
     if '-' in ports_arg:
@@ -181,9 +189,6 @@ async def load_progress():
     except FileNotFoundError:
         return None
 
-## End of Utility Functions Section
-
-## Evasion Script Creation Section
 async def create_evasion_script(open_ports, folder_name):
     script_content = """
 import asyncio
@@ -268,9 +273,7 @@ if __name__ == "__main__":
     
     print(f"{Fore.YELLOW}Evasion script created: {script_file}")
     print(f"{Fore.YELLOW}Run it with: sudo python3 {script_file} 'nc [ip] [port]'")
-## End of Evasion Script Creation Section
 
-## Scapy and Standard Port Scanning Section
 class AdaptiveScanner:
     def __init__(self, max_history=100):
         self.technique_history = deque(maxlen=max_history)
@@ -286,7 +289,7 @@ class AdaptiveScanner:
             'covert_channel_scan': 1.0
         }
         self.last_adjustment_time = time.time()
-        self.adjustment_interval = 60  # Adjust weights every 60 seconds
+        self.adjustment_interval = 60  
 
     async def adaptive_scan(self, ip, port):
         techniques = [
@@ -427,7 +430,7 @@ class AdaptiveScanner:
         return is_open, responses
 
     async def covert_channel_scan(self, ip, port):
-        covert_data = os.urandom(16)  # Random data to embed
+        covert_data = os.urandom(16)  
         packet = IP(dst=ip) / TCP(dport=port, flags='S', options=[('Timestamp', (int.from_bytes(covert_data[:4], 'big'), int.from_bytes(covert_data[4:8], 'big')))])
         packet[IP].id = int.from_bytes(covert_data[8:10], 'big')
         packet[TCP].seq = int.from_bytes(covert_data[10:14], 'big')
@@ -498,7 +501,7 @@ async def check_tcp_port(ip, port, open_ports):
     except (asyncio.TimeoutError, ConnectionRefusedError):
         pass
     except OSError as e:
-        if e.errno == 113:  # Connect call failed
+        if e.errno == 113:  
             logging.debug(f"Connection failed for TCP {ip}:{port} - {e}")
         else:
             logging.error(f"Unexpected error checking TCP {ip}:{port} - {e}")
@@ -531,11 +534,11 @@ async def check_udp_port(ip, port, open_ports):
             tqdm.write(f"{Fore.GREEN}UDP {ip}:{port} is open")
             logging.info(f"UDP {ip}:{port} is open. Received response from server.")
         except asyncio.TimeoutError:
-            pass  # Port is likely closed or filtered
+            pass  
         finally:
             protocol.transport.close()
     except OSError as e:
-        if e.errno == 113:  # Connect call failed
+        if e.errno == 113: 
             logging.debug(f"Connection failed for UDP {ip}:{port} - {e}")
         else:
             logging.error(f"Unexpected error checking UDP {ip}:{port} - {e}")
@@ -575,9 +578,7 @@ async def scan_ports(ip, ports, protocol, progress, open_ports, max_workers, use
     if use_scapy and use_adaptive:
         adaptive_scanner.adjust_techniques()
 
-## End of Scapy and Standard Port Scanning Section
 
-## Nmap Service Detection Section
 async def nmap_service_detection(open_ports, protocol, folder_name):
     if not open_ports:
         print(f"{Fore.YELLOW}No open ports found. Skipping service detection.")
@@ -620,19 +621,17 @@ async def nmap_service_detection(open_ports, protocol, folder_name):
         await f.write(f"{protocol.upper()} Service Detection Summary\n")
         await f.write("=" * 50 + "\n\n")
         
-        # Adjust column widths based on the longest entries
+
         host_width = max(len("HOST"), max(len(result[0]) for result in summary_data))
         port_width = max(len("PORT"), max(len(str(result[1])) for result in summary_data))
         state_width = max(len("STATE"), max(len(result[2]) for result in summary_data))
         
-        # Create the header
         header = f"{'HOST':<{host_width}}  {'PORT':<{port_width}}  {'STATE':<{state_width}}  SERVICE VERSION\n"
         separator = f"{'-'*host_width}  {'-'*port_width}  {'-'*state_width}  ---------------\n"
         
         await f.write(header)
         await f.write(separator)
         
-        # Write the data
         for result in summary_data:
             line = f"{result[0]:<{host_width}}  {str(result[1]):<{port_width}}  {result[2]:<{state_width}}  {result[3]}\n"
             await f.write(line)
@@ -662,9 +661,6 @@ def parse_nmap_output(nmap_output, ip, port):
                 break
     return ip, port, state, service
 
-## End of Nmap Service Detection Section
-
-## Adaptive Scanning Section
 async def adaptive_scan(ip, ports, protocol, progress, open_ports, max_workers, use_scapy=False, rate_limit=None):
     chunk_size = 100
     for i in range(0, len(ports), chunk_size):
@@ -673,10 +669,6 @@ async def adaptive_scan(ip, ports, protocol, progress, open_ports, max_workers, 
         if len(open_ports) > 0 and len(open_ports) % 10 == 0:
             max_workers = min(max_workers * 2, 1000)
             print(f"{Fore.YELLOW}Adapting worker count to: {max_workers}")
-
-## End of Adaptive Scanning Section
-
-## Utilize NMAP Top Ports 
 
 def load_top_ports(n):
     nmap_services_path = "/usr/share/nmap/nmap-services"
@@ -701,7 +693,6 @@ def load_top_ports(n):
     return [port for port, _ in top_ports]
 
 
-## End of Utilize NMAP Top Ports 
 
 def schedule_scan(args, schedule_time):
     try:
@@ -709,10 +700,8 @@ def schedule_scan(args, schedule_time):
         current_dir = os.getcwd()
         current_user = pwd.getpwuid(os.getuid()).pw_name
         
-        # Get the full path of the ips.txt file
         ips_file_path = os.path.abspath(args.ip)
         
-        # Escape special characters in the command and quote the entire argument string
         escaped_args = ' '.join(f"'{arg}'" if arg != args.ip else f"'{ips_file_path}'" for arg in sys.argv[1:])
         command = f"python3 '{script_path}' {escaped_args}"
         
@@ -793,6 +782,9 @@ WantedBy=timers.target
         logging.exception("Exception details:")
         sys.exit(1)
 
+def check_sudo_privileges():
+    return os.geteuid() == 0
+
 async def main():
     is_scheduled_run = os.environ.get('NOLIMIT_SCHEDULED_RUN') == 'true'
     ascii_logo = r'''
@@ -822,7 +814,7 @@ async def main():
     )
     parser.add_argument('-p', '--ports', nargs='?', const='1-65535', type=str, help='Ports to scan, e.g., "80,443" or "1-1024". If not specified, all ports will be scanned.')
     parser.add_argument('--top-ports', type=int, help='Scan only the top N most common ports')    
-    parser.add_argument('-i', '--ip', type=str, required=True, help='[Required] Single IP or file with list of IPs to scan')
+    parser.add_argument('-i', '--ip', type=str, help='Single IP address or file with list of IPs to scan')
     parser.add_argument('-t', '--tcp', action='store_true', help='TCP Port Scans')
     parser.add_argument('-u', '--udp', action='store_true', help='UDP Port Scans')
     parser.add_argument('-srv', '--service', action='store_true', help='Enable service detection with Nmap')
@@ -836,6 +828,12 @@ async def main():
 
 
     args = parser.parse_args()
+
+    if args.service and not check_sudo_privileges():
+        print(f"{Fore.RED}Error: Service detection (-srv) requires root privileges.")
+        print(f"{Fore.YELLOW}Please run the script with sudo:")
+        print(f"{Fore.YELLOW}sudo python3 {sys.argv[0]} {' '.join(sys.argv[1:])}")
+        sys.exit(1)
 
     if args.schedule and not is_scheduled_run:
         try:
@@ -876,8 +874,8 @@ async def main():
     else:
         ports = list(range(1, 65536))
 
-    if not os.path.isfile(args.ip):
-        print(f"{Fore.RED}Error: The specified IP file '{args.ip}' does not exist in the current working directory.")
+    if not args.ip:
+        print(f"{Fore.RED}Error: Please specify an IP address or file using the --ip argument")
         sys.exit(1)
 
     ips = shuffle_ips(await load_ips(args.ip))
@@ -967,3 +965,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

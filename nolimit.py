@@ -23,6 +23,7 @@ from tqdm import tqdm
 from datetime import datetime
 from collections import deque
 import ipaddress
+import re
 
 
 init(autoreset=True)
@@ -489,19 +490,179 @@ async def check_udp_port_scapy(ip, port, open_ports, adaptive_scanner):
         tqdm.write(f"{Fore.GREEN}UDP {ip}:{port} is open (Technique: {technique})")
         logging.info(f"UDP {ip}:{port} is open (Technique: {technique}).")
 
+async def grab_banner(ip, port, protocol):
+    try:
+        if protocol == 'tcp':
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(ip, port),
+                timeout=3.0
+            )
+            
+            # Send common protocol probes
+            probes = [
+                b'HEAD / HTTP/1.0\r\n\r\n',
+                b'GET / HTTP/1.0\r\n\r\n',
+                b'\r\n',
+                b'HELP\r\n',
+                b'VERSION\r\n'
+            ]
+            
+            for probe in probes:
+                try:
+                    writer.write(probe)
+                    await writer.drain()
+                    banner = await asyncio.wait_for(reader.read(1024), timeout=2.0)
+                    if banner:
+                        writer.close()
+                        await writer.wait_closed()
+                        return banner.decode('utf-8', errors='ignore').strip()
+                except:
+                    continue
+            
+            writer.close()
+            await writer.wait_closed()
+        
+        return None
+    except Exception as e:
+        logging.debug(f"Banner grab failed for {ip}:{port}/{protocol} - {str(e)}")
+        return None
+
+SERVICE_FINGERPRINTS = {
+    21: {
+        'probes': [b'USER anonymous\r\n'],
+        'patterns': {
+            b'220': 'FTP',
+            b'230': 'FTP (Anonymous enabled)',
+            b'530': 'FTP (Auth required)'
+        }
+    },
+    22: {
+        'probes': [b'\r\n'],
+        'patterns': {
+            b'SSH': 'SSH',
+            b'OpenSSH': 'OpenSSH'
+        }
+    },
+    23: {
+        'probes': [b'\r\n'],
+        'patterns': {
+            b'telnet': 'Telnet'
+        }
+    },
+    25: {
+        'probes': [b'HELO test\r\n'],
+        'patterns': {
+            b'220': 'SMTP',
+            b'250': 'SMTP'
+        }
+    },
+    80: {
+        'probes': [b'GET / HTTP/1.0\r\nHost: localhost\r\n\r\n'],
+        'patterns': {
+            b'Server: Apache': 'Apache',
+            b'Server: nginx': 'nginx',
+            b'Server: Microsoft-IIS': 'IIS'
+        }
+    },
+    443: {
+        'probes': [b'GET / HTTP/1.1\r\nHost: localhost\r\n\r\n'],
+        'patterns': {
+            b'Server: Apache': 'Apache SSL',
+            b'Server: nginx': 'nginx SSL',
+            b'Server: Microsoft-IIS': 'IIS SSL'
+        }
+    },
+    3306: {
+        'probes': [b'\x00'],
+        'patterns': {
+            b'mysql': 'MySQL',
+            b'MariaDB': 'MariaDB'
+        }
+    },
+    5432: {
+        'probes': [b'\x00'],
+        'patterns': {
+            b'PostgreSQL': 'PostgreSQL'
+        }
+    }
+}
+
+async def fingerprint_service(ip, port, protocol):
+    try:
+        if protocol != 'tcp' or port not in SERVICE_FINGERPRINTS:
+            return None
+
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, port),
+            timeout=3.0
+        )
+
+        fingerprint = SERVICE_FINGERPRINTS[port]
+        service_info = None
+
+        for probe in fingerprint['probes']:
+            try:
+                writer.write(probe)
+                await writer.drain()
+                response = await asyncio.wait_for(reader.read(1024), timeout=2.0)
+                
+                for pattern, service in fingerprint['patterns'].items():
+                    if pattern in response:
+                        service_info = service
+                        version_match = re.search(rb'(?i)(?:version|v|/)\s*([0-9][0-9a-z.-]+)', response)
+                        if version_match:
+                            service_info += f" {version_match.group(1).decode()}"
+                        break
+                
+                if service_info:
+                    break
+
+            except:
+                continue
+
+        writer.close()
+        await writer.wait_closed()
+        return service_info
+
+    except Exception as e:
+        logging.debug(f"Service fingerprint failed for {ip}:{port}/{protocol} - {str(e)}")
+        return None
+
+# Modify check_tcp_port function to include service fingerprinting
 async def check_tcp_port(ip, port, open_ports):
     try:
         conn = asyncio.open_connection(ip, port)
         reader, writer = await asyncio.wait_for(conn, timeout=1.0)
-        open_ports.append((ip, port, 'tcp', 'standard'))
-        tqdm.write(f"{Fore.GREEN}TCP {ip}:{port} is open")
-        logging.info(f"TCP {ip}:{port} is open. Connection established successfully.")
+        banner = await grab_banner(ip, port, 'tcp')
+        service_info = await fingerprint_service(ip, port, 'tcp')
+        
+        if service_info:
+            open_ports.append((ip, port, 'tcp', 'standard', service_info))
+        else:
+            open_ports.append((ip, port, 'tcp', 'standard'))
+        
+        if banner:
+            formatted_banner = ' '.join(banner.split())
+            if len(formatted_banner) > 50:
+                formatted_banner = formatted_banner[:47] + "..."
+            
+            service_str = f" ({service_info})" if service_info else ""
+            tqdm.write(f"""
+{Fore.GREEN}[+] TCP {ip}:{port} is open{service_str}
+{Fore.CYAN}    └─ Banner: {formatted_banner}{Fore.RESET}""")
+            
+            logging.info(f"TCP {ip}:{port} is open{service_str}. Banner: {banner[:100]}")
+        else:
+            service_str = f" ({service_info})" if service_info else ""
+            tqdm.write(f"{Fore.GREEN}[+] TCP {ip}:{port} is open{service_str}")
+            logging.info(f"TCP {ip}:{port} is open{service_str}. Connection established successfully.")
+        
         writer.close()
         await writer.wait_closed()
     except (asyncio.TimeoutError, ConnectionRefusedError):
         pass
     except OSError as e:
-        if e.errno == 113:  
+        if e.errno == 113:
             logging.debug(f"Connection failed for TCP {ip}:{port} - {e}")
         else:
             logging.error(f"Unexpected error checking TCP {ip}:{port} - {e}")
@@ -547,6 +708,30 @@ async def check_udp_port(ip, port, open_ports):
 
 async def scan_ports(ip, ports, protocol, progress, open_ports, max_workers, use_scapy=False, use_adaptive=False, rate_limit=None):
     sem = asyncio.Semaphore(max_workers)
+    
+    # Add rate limiter using token bucket algorithm
+    class RateLimiter:
+        def __init__(self, rate):
+            self.rate = rate
+            self.tokens = rate
+            self.last_update = time.time()
+            self.lock = asyncio.Lock()
+        
+        async def acquire(self):
+            async with self.lock:
+                now = time.time()
+                time_passed = now - self.last_update
+                self.tokens = min(self.rate, self.tokens + time_passed * self.rate)
+                self.last_update = now
+                
+                if self.tokens < 1:
+                    wait_time = (1 - self.tokens) / self.rate
+                    await asyncio.sleep(wait_time)
+                    self.tokens = 0
+                else:
+                    self.tokens -= 1
+
+    rate_limiter = RateLimiter(rate_limit) if rate_limit else None
 
     if use_scapy:
         adaptive_scanner = AdaptiveScanner() if use_adaptive else None
@@ -556,6 +741,9 @@ async def scan_ports(ip, ports, protocol, progress, open_ports, max_workers, use
     async def scan_with_semaphore(port):
         async with sem:
             try:
+                if rate_limiter:
+                    await rate_limiter.acquire()
+                
                 if use_scapy:
                     if protocol == 'tcp':
                         await check_tcp_port_scapy(ip, port, open_ports, adaptive_scanner)
@@ -568,8 +756,6 @@ async def scan_ports(ip, ports, protocol, progress, open_ports, max_workers, use
                         await check_udp_port(ip, port, open_ports)
                 
                 progress.update(1)
-                if rate_limit:
-                    await asyncio.sleep(1 / rate_limit)
             except Exception as e:
                 logging.error(f"Error scanning {ip}:{port} - {str(e)}")
 
@@ -785,6 +971,40 @@ WantedBy=timers.target
 def check_sudo_privileges():
     return os.geteuid() == 0
 
+QUICK_SCAN_PROFILES = {
+    'web': {
+        'description': 'Web Services',
+        'ports': [80, 443, 8080, 8443, 3000, 4443, 8000, 8888, 9443]
+    },
+    'remote': {
+        'description': 'Remote Access',
+        'ports': [22, 23, 3389, 5900, 5901, 5902]
+    },
+    'database': {
+        'description': 'Databases',
+        'ports': [1433, 1521, 3306, 5432, 6379, 27017, 27018]
+    },
+    'mail': {
+        'description': 'Mail Services',
+        'ports': [25, 110, 143, 465, 587, 993, 995]
+    },
+    'all': {
+        'description': 'All Common Services',
+        'ports': [20, 21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 445, 
+                 993, 995, 1723, 3306, 3389, 5900, 8080, 8443]
+    }
+}
+
+def show_quick_scan_menu():
+    print(f"\n{Fore.CYAN}=== Quick Scan Profiles ===")
+    for key, profile in QUICK_SCAN_PROFILES.items():
+        print(f"{Fore.GREEN}[{key}] {profile['description']}")
+        ports_str = ', '.join(map(str, profile['ports'][:5]))
+        if len(profile['ports']) > 5:
+            ports_str += f"... (+{len(profile['ports']) - 5} more)"
+        print(f"{Fore.YELLOW}    Ports: {ports_str}")
+    print(f"{Fore.CYAN}=====================")
+
 async def main():
     is_scheduled_run = os.environ.get('NOLIMIT_SCHEDULED_RUN') == 'true'
     ascii_logo = r'''
@@ -825,15 +1045,25 @@ async def main():
     parser.add_argument('--rate-limit', type=float, help='Rate limit in packets per second')
     parser.add_argument('--schedule', type=str, help='Schedule the scan for a future time (format: "MM/DD HH:MM")')
     parser.add_argument('-l', '--log', help='Log file to save scan results', type=str)
+    parser.add_argument('--quick', choices=QUICK_SCAN_PROFILES.keys(),
+                       help='Quick scan using predefined profiles (web, remote, database, mail, all)')
 
 
     args = parser.parse_args()
 
-    if args.service and not check_sudo_privileges():
-        print(f"{Fore.RED}Error: Service detection (-srv) requires root privileges.")
-        print(f"{Fore.YELLOW}Please run the script with sudo:")
-        print(f"{Fore.YELLOW}sudo python3 {sys.argv[0]} {' '.join(sys.argv[1:])}")
-        sys.exit(1)
+    if args.service:
+        if not check_sudo_privileges():
+            print(f"{Fore.RED}Error: Service detection (-srv) requires root privileges.")
+            print(f"{Fore.YELLOW}Please run the script with sudo:")
+            print(f"{Fore.YELLOW}sudo python3 {sys.argv[0]} {' '.join(sys.argv[1:])}")
+            sys.exit(1)
+        try:
+            subprocess.check_call(["nmap", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            print(f"{Fore.RED}Error: nmap is not installed. Service detection requires nmap.")
+            print(f"{Fore.YELLOW}Please install nmap first:")
+            print(f"{Fore.YELLOW}sudo apt install nmap")
+            sys.exit(1)
 
     if args.schedule and not is_scheduled_run:
         try:
@@ -913,12 +1143,14 @@ async def main():
     print(f"{Fore.CYAN}Scan started. Any errors will be logged to 'nolimit_errors.log'.")
 
     try:
-        with tqdm(total=total_scans, desc="Scanning Progress", unit="scan", leave=True, position=1) as progress:
-            for ip in ips:
-                if args.tcp:
-                    await scan_ports(ip, ports, 'tcp', progress, open_ports, args.workers, use_scapy, args.adaptive, args.rate_limit)
-                if args.udp: 
-                    await scan_ports(ip, ports, 'udp', progress, open_ports, args.workers, use_scapy, args.adaptive, args.rate_limit)
+        with tqdm(total=total_scans, desc="Overall Progress", unit="scan", leave=True, position=0) as progress:
+            with tqdm(total=len(ips), desc="IP Progress", unit="ip", leave=True, position=1) as ip_progress:
+                for ip in ips:
+                    if args.tcp:
+                        await scan_ports(ip, ports, 'tcp', progress, open_ports, args.workers, use_scapy, args.adaptive, args.rate_limit)
+                    if args.udp:
+                        await scan_ports(ip, ports, 'udp', progress, open_ports, args.workers, use_scapy, args.adaptive, args.rate_limit)
+                    ip_progress.update(1)
 
         tcp_folder = None
         udp_folder = None

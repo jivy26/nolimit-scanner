@@ -139,7 +139,16 @@ async def save_open_ports(open_ports, protocol):
     web_urls_file = os.path.join(folder_name, "web-urls.txt")
     web_urls = set()
 
-    for ip, port, proto, _ in sorted(open_ports, key=lambda x: (x[0], x[1])):
+    for entry in open_ports:
+        # Handle both 4-tuple and 5-tuple formats
+        if len(entry) == 4:
+            ip, port, proto, technique = entry
+            service_info = None
+        elif len(entry) == 5:
+            ip, port, proto, technique, service_info = entry
+        else:
+            continue  # Skip invalid entries
+
         if proto == protocol:
             try:
                 if port in common_ports:
@@ -1194,4 +1203,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

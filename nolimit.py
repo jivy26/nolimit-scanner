@@ -787,46 +787,75 @@ async def nmap_service_detection(open_ports, protocol, folder_name):
     protocol_name = "TCP" if protocol == "tcp" else "UDP"
     console.print(f"{Fore.CYAN}\nStarting Nmap service detection for {protocol_name} ports...")
 
-    total_ports = sum(1 for _, _, proto, _ in open_ports if proto == protocol)
+    # Filter ports for the specific protocol and handle both 4-tuple and 5-tuple formats
+    protocol_ports = []
+    for entry in open_ports:
+        if len(entry) >= 4:  # Handle both 4-tuple and 5-tuple formats
+            ip, port, proto, *_ = entry  # Use *_ to capture any additional elements
+            if proto == protocol:
+                protocol_ports.append((ip, port))
 
+    total_ports = len(protocol_ports)
     summary_data = []
 
     async def scan_and_update(ip, port):
-        result = await run_nmap_scan(ip, port)
-        table.add_row(result[0], str(result[1]), result[2], result[3])
-        summary_data.append(result)
-        progress.update(1)
-        console.clear()
-        console.print(table)
+        try:
+            result = await run_nmap_scan(ip, port)
+            if isinstance(result, (list, tuple)) and len(result) == 4:
+                host, port_num, state, service = result  # Explicitly unpack the values
+                table.add_row(str(host), str(port_num), state, service)
+                summary_data.append([str(host), str(port_num), state, service])
+            else:
+                logging.error(f"Invalid result format for {ip}:{port} - {result}")
+            progress.update(1)
+            console.clear()
+            console.print(table)
+        except Exception as e:
+            logging.error(f"Error scanning {ip}:{port}: {str(e)}")
+            progress.update(1)
 
     with tqdm(total=total_ports, desc="Service Detection Progress", unit="port", leave=True) as progress:
         tasks = []
-        for ip, port, proto, _ in open_ports:
-            if proto == protocol:
-                tasks.append(scan_and_update(ip, port))
+        for ip, port in protocol_ports:
+            tasks.append(scan_and_update(ip, port))
         
         await asyncio.gather(*tasks)
 
+    # Write summary to file
     summary_file = os.path.join(folder_name, "summary.txt")
     
     async with aiofiles.open(summary_file, 'w') as f:
         await f.write(f"{protocol.upper()} Service Detection Summary\n")
         await f.write("=" * 50 + "\n\n")
         
-
-        host_width = max(len("HOST"), max(len(result[0]) for result in summary_data))
-        port_width = max(len("PORT"), max(len(str(result[1])) for result in summary_data))
-        state_width = max(len("STATE"), max(len(result[2]) for result in summary_data))
-        
-        header = f"{'HOST':<{host_width}}  {'PORT':<{port_width}}  {'STATE':<{state_width}}  SERVICE VERSION\n"
-        separator = f"{'-'*host_width}  {'-'*port_width}  {'-'*state_width}  ---------------\n"
-        
-        await f.write(header)
-        await f.write(separator)
-        
-        for result in summary_data:
-            line = f"{result[0]:<{host_width}}  {str(result[1]):<{port_width}}  {result[2]:<{state_width}}  {result[3]}\n"
-            await f.write(line)
+        if summary_data:
+            try:
+                host_width = max(len("HOST"), max(len(str(result[0])) for result in summary_data))
+                port_width = max(len("PORT"), max(len(str(result[1])) for result in summary_data))
+                state_width = max(len("STATE"), max(len(str(result[2])) for result in summary_data))
+                
+                header = f"{'HOST':<{host_width}}  {'PORT':<{port_width}}  {'STATE':<{state_width}}  SERVICE VERSION\n"
+                separator = f"{'-'*host_width}  {'-'*port_width}  {'-'*state_width}  ---------------\n"
+                
+                await f.write(header)
+                await f.write(separator)
+                
+                for result in summary_data:
+                    try:
+                        line = f"{str(result[0]):<{host_width}}  {str(result[1]):<{port_width}}  {str(result[2]):<{state_width}}  {str(result[3])}\n"
+                        await f.write(line)
+                    except Exception as e:
+                        logging.error(f"Error writing summary line for {result}: {str(e)}")
+            except Exception as e:
+                logging.error(f"Error formatting summary table: {str(e)}")
+                # Fallback to simple format if formatting fails
+                for result in summary_data:
+                    try:
+                        await f.write(f"{result[0]}:{result[1]} - {result[2]} - {result[3]}\n")
+                    except Exception as e:
+                        logging.error(f"Error writing simple summary line for {result}: {str(e)}")
+        else:
+            await f.write("No services detected.\n")
     
     print(f"{Fore.YELLOW}Summary saved to: {summary_file}")
 
@@ -844,14 +873,24 @@ async def run_nmap_scan(ip, port):
 def parse_nmap_output(nmap_output, ip, port):
     state = "closed"
     service = "unknown"
+    
+    # Split the output into lines and look for the port information
     for line in nmap_output.splitlines():
+        # Look specifically for lines containing the port number
         if f"{port}/" in line:
-            parts = line.split()
-            if len(parts) >= 3:
-                state = parts[1]
-                service = " ".join(parts[2:])
+            try:
+                # More robust parsing of the line
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    state = parts[1]
+                    # Join the remaining parts as the service description
+                    service = " ".join(parts[2:]) if len(parts) > 2 else "unknown"
                 break
-    return ip, port, state, service
+            except Exception as e:
+                logging.error(f"Error parsing Nmap output line '{line}': {str(e)}")
+                continue
+    
+    return [ip, port, state, service]  # Return as list instead of tuple
 
 async def adaptive_scan(ip, ports, protocol, progress, open_ports, max_workers, use_scapy=False, rate_limit=None):
     chunk_size = 100
@@ -1203,3 +1242,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
